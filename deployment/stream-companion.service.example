@@ -1,0 +1,16 @@
+[Unit]
+Description=Stream Companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Beispielpfade durch den eigenen Installationsordner ersetzen.
+WorkingDirectory=/home/USER/stream-companion
+ExecStart=/home/USER/stream-companion/.venv/bin/python /home/USER/stream-companion/run.py --host 0.0.0.0 --no-browser
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

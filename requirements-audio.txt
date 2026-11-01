@@ -1,0 +1,5 @@
+-r requirements.txt
+sounddevice==0.5.5
+mss==10.2.0
+streamlink==8.6.3
+

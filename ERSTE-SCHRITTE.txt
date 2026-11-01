@@ -1,0 +1,24 @@
+STREAM COMPANION 0.1.0
+
+WINDOWS
+1. Python 3.11+ (64 Bit) muss als "python" installiert sein.
+2. Start.cmd doppelklicken. Beim ersten Start werden Pakete installiert.
+3. In der Oberfläche zuerst "Demo ansehen" oder "Einrichtung" öffnen.
+4. Twitch-App-ID hinterlegen; Kanalbesitzer und Bot separat anmelden.
+5. KI und Audioquelle einrichten. Mit "Vorschau" beginnen.
+
+RASPBERRY / LINUX
+1. 64-Bit-System mit Python 3.11+.
+2. sh setup-raspberry.sh
+3. sh start-linux.sh
+4. http://IP-DES-RASPBERRY:8787 aufrufen.
+5. Lokalen Zugangscode aus data/access.key eingeben.
+
+OPTIONALER PC-SENDER
+1. Im Workspace unter Audio & Bild einen Verbindungscode erzeugen.
+2. Auf dem Streamer-PC PC-Sender.cmd öffnen.
+3. Workspace-Adresse und Verbindungscode eintragen, Quellen wählen.
+4. Sender bereitstellen, dann im Workspace den Begleiter starten.
+
+Noch kein echter Twitch-Livetest mit deinen Konten durchgeführt.
+Für Einrichtung, Datenablage und bekannte Grenzen README.md lesen.
