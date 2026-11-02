@@ -31,6 +31,7 @@ class Engine:
         self.last_voice = 0
         self.last_contribution = 0
         self.last_analysis = 0
+        self.last_failed_analysis_key = None
         self.analysis_started = 0
         self.analysis_kind = "general"
         self.last_analysis_duration = 0
@@ -370,6 +371,8 @@ class Engine:
             return False, "Stundenlimit erreicht."
         if now - self.last_observation > 180:
             return False, "Es fehlt aktueller Gesprächskontext."
+        if self.last_failed_analysis_key == self.analysis_context_key(settings):
+            return False, "Der letzte KI-Versuch ist abgelaufen. Wartet auf neuen Gesprächskontext oder eine manuelle Prüfung."
         if target and target["kind"] == "audio" and (now - self.last_voice < 2 or any(event["kind"] == "audio" and event.get("role") == "streamer" and event.get("provisional") and event["time"] > target["time"] for event in self.events)):
             return False, "Die gesprochene Aussage wird noch ergänzt."
         if not target and now - self.last_voice < 2:
@@ -377,6 +380,18 @@ class Engine:
         if not target and self.last_question and self.last_owner_text <= self.last_question:
             return False, "Die letzte Frage ist noch offen."
         return True, "Eine Ansprache wird bevorzugt beantwortet." if target else "Bereit für einen passenden Beitrag."
+
+    def analysis_context_key(self, settings=None):
+        settings = settings or self.store.settings()
+        target = self.reply_target()
+        observations = tuple((row["id"], row.get("version", 0)) for row in self.events if row["kind"] in {"audio", "chat"} and not row.get("provisional"))[-8:]
+        return (self.epoch, self.revision, reply_key(target) if target else None, observations, settings.provider, settings.text_model, settings.personality, settings.local_ai_cpu_threads, settings.screenshots_enabled)
+
+    def analysis_due(self):
+        settings, now = self.store.settings(), time.time()
+        target = self.reply_target(now)
+        interval = 10 if target else max(25, settings.min_interval / 2)
+        return self.can_contribute(now)[0] and not self.pending and now - self.last_analysis >= interval and (target or now - self.last_voice >= settings.silence_after or now - self.last_observation < 25)
 
     def context(self):
         settings, _, _, external = self.ai.connection()
@@ -440,12 +455,9 @@ class Engine:
                     self.pending = None
                 allowed, _ = self.can_contribute()
                 settings = self.store.settings()
-                quiet = time.time() - self.last_voice
-                target = self.reply_target()
-                analysis_interval = 10 if target else max(25, settings.min_interval / 2)
                 if self.pending and settings.mode == "automatic" and allowed:
                     await self.send_pending(self.pending["id"], automatic=True)
-                elif allowed and not self.pending and time.time() - self.last_analysis >= analysis_interval and (target or quiet >= settings.silence_after or time.time() - self.last_observation < 25):
+                elif self.analysis_due():
                     await self.analyze()
             except asyncio.CancelledError:
                 raise
@@ -462,11 +474,14 @@ class Engine:
         generation = asyncio.create_task(self.ai.generate(context, screenshot))
         self.generation_task, self.generation_kind = generation, kind
         try:
-            result = await generation
+            async with asyncio.timeout(self.ai.time_budget(kind)):
+                result = await generation
             if self.preempted_generation is generation:
                 self.last_analysis = 0
                 return None
             return result
+        except TimeoutError as exc:
+            raise AIError(f"Die KI lieferte innerhalb von {self.ai.time_budget(kind)} Sekunden keine vollständige Antwort. Der Versuch wurde beendet; es wurde kein Teiltext gesendet.") from exc
         except asyncio.CancelledError:
             if asyncio.current_task().cancelling():
                 raise
@@ -492,10 +507,10 @@ class Engine:
         if reply_key(target) in self.memory_seen or any(job["id"] == reply_key(target) for job in self.memory_backlog):
             return
         self.memory_seen.append(reply_key(target))
-        self.memory_backlog.append({"id": reply_key(target), "subject_id": target["subject_id"], "owner": target["kind"] == "audio" and target.get("role") == "streamer", "channel": self.store.settings().channel, "revision": self.revision, "time": target["time"], "context": {"now": context["now"], "context": [dict(target)], "memories": context["memories"], "memory_subjects": [target["subject_id"]], "memory_only": True}})
+        self.memory_backlog.append({"id": reply_key(target), "subject_id": target["subject_id"], "owner": target["kind"] == "audio" and target.get("role") == "streamer", "channel": self.store.settings().channel, "revision": self.revision, "time": target["time"], "context": {"now": context["now"], "character": context.get("character", {}), "channel": context.get("channel", {}), "context": [dict(target)], "memories": context["memories"], "memory_subjects": [target["subject_id"]], "memory_only": True}})
 
     async def process_memory(self):
-        if self.model_warming or self.analysis_lock.locked() or not self.memory_backlog or self.reply_target():
+        if self.model_warming or self.analysis_lock.locked() or not self.memory_backlog or self.reply_target() or self.analysis_due():
             return
         async with self.analysis_lock:
             job = self.memory_backlog.popleft()
@@ -530,10 +545,12 @@ class Engine:
     def draft_expired(draft):
         return time.time() > min(draft["created"] + 90, draft.get("expires", draft["created"] + 90))
 
-    async def analyze(self):
+    async def analyze(self, force=False):
         if self.analysis_lock.locked():
             return
         async with self.analysis_lock:
+            if force:
+                self.last_failed_analysis_key = None
             allowed, reason = self.can_contribute()
             if not allowed:
                 raise ValueError(reason)
@@ -541,7 +558,9 @@ class Engine:
             self.last_analysis = time.time()
             self.analysis_started = self.last_analysis
             self.analysis_kind = "reply" if self.reply_target() else "general"
-            expires = self.last_analysis + 90
+            expires = self.last_analysis + self.ai.time_budget(self.analysis_kind)
+            attempt_key = self.analysis_context_key()
+            preempted = False
             try:
                 context = self.context()
                 target = context["reply_to"]
@@ -550,6 +569,7 @@ class Engine:
                 image = self.screenshot if self.store.settings().screenshots_enabled and time.time() - self.screenshot_time < 90 else None
                 result = await self.run_model(context, image, kind="reply" if target else "general")
                 if result is None:
+                    preempted = True
                     return
                 if not self.running or self.paused or epoch != self.epoch:
                     return
@@ -558,7 +578,8 @@ class Engine:
                     return
                 if time.time() > expires:
                     self.finish_reply(target)
-                    await self.notify("warning", "KI-Antwort zu spät", "Die Berechnung dauerte länger als 90 Sekunden. Der Beitrag wurde nicht versendet.")
+                    self.last_failed_analysis_key = attempt_key
+                    await self.notify("warning", "KI-Antwort zu spät", "Das Zeitfenster für diese Antwort ist abgelaufen. Der Beitrag wurde nicht versendet; derselbe Kontext wird nicht sofort erneut berechnet.")
                     return
                 self.save_memories(result, context)
                 self.defer_memory(context)
@@ -582,9 +603,14 @@ class Engine:
                         await self.send_pending(self.pending["id"], automatic=True)
                     else:
                         await self.notify("info", "Beitrag wartet", "Der Vorschlag wartet auf eine passende Gesprächspause.")
+            except (AIError, TimeoutError) as exc:
+                self.last_failed_analysis_key = attempt_key
+                raise
             finally:
                 self.last_analysis_duration = time.time() - self.analysis_started
                 self.analysis_started = 0
+                if not preempted:
+                    self.last_analysis = time.time()
 
     def save_memories(self, result, context):
         settings = self.store.settings()
@@ -690,10 +716,12 @@ class Engine:
         settings = self.store.settings()
         _, reason = self.can_contribute()
         analyzing = bool(self.analysis_started and self.analysis_lock.locked() and not self.model_warming)
+        progress = self.ai.progress if analyzing and self.ai.progress.get("kind") == self.analysis_kind else {}
+        phase_seconds = round(max(0, time.time() - progress.get("phase_started", self.analysis_started)), 1) if analyzing else 0
+        label = "Prüft Erinnerungen" if self.analysis_kind == "memory" else "Schreibt Antwort" if progress.get("phase") == "writing" else "Verarbeitet Text und Bild" if progress.get("image") else "Verarbeitet Gesprächskontext" if progress.get("phase") == "context" else "Formuliert gerade"
         if analyzing and self.running and not self.paused:
-            activity = "prüft Erinnerungen" if self.analysis_kind == "memory" else "formuliert"
-            reason = f"KI {activity} seit {round(time.time() - self.analysis_started)} Sekunden."
-        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.twitch.connected, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
+            reason = f"KI {label[0].lower() + label[1:]} seit {round(phase_seconds)} Sekunden."
+        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.twitch.connected, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "analysis_label": label if analyzing else "", "analysis_phase": progress.get("phase", ""), "phase_seconds": phase_seconds, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
 
     async def close(self):
         await self.stop()

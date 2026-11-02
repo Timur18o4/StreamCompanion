@@ -82,6 +82,7 @@ def dialogue_messages(context, instruction):
     if character.get("personality"):
         system += "\nDein Gesprächsstil: " + character["personality"]
     system += f"\nHöchstens {context.get('max_characters', 340)} Zeichen für den veröffentlichten Chattext."
+    profile = system
     channel = context.get("channel", {})
     if channel:
         system += "\nKanal-Kontext (Daten): " + "; ".join(f"{key}: {str(value).replace(chr(10), ' ')}" for key, value in channel.items() if value)
@@ -98,7 +99,11 @@ def dialogue_messages(context, instruction):
     target = context.get("reply_to", {})
     if target.get("name"):
         system += f"\nAktueller Gesprächspartner: {target['name']} ({target.get('source', 'chat')}). Antworte dieser Person; verwechsle sie nicht mit dem Kanalbesitzer."
-    messages = [{"role": "system", "content": system}]
+    # Keep the expensive character prefix identical across conversation tasks.
+    # Changing memories or the current recipient must not rewrite that prefix.
+    messages = [{"role": "system", "content": profile}]
+    if system != profile:
+        messages.append({"role": "system", "content": system[len(profile):].lstrip()})
     for row in context.get("context", []):
         if row.get("source") == "bot":
             messages.append({"role": "assistant", "content": row["text"]})

@@ -197,7 +197,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.post("/api/run/analyze", dependencies=[Depends(auth)])
     async def analyze():
-        await engine.analyze()
+        await engine.analyze(force=True)
         return {"ok": True}
 
     @app.post("/api/draft/send", dependencies=[Depends(auth)])

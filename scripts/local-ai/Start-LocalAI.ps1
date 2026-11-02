@@ -26,6 +26,21 @@ function Test-LocalServer {
     } catch { return $false }
 }
 
+function Test-ConfiguredModels {
+    $manifestRoot = Join-Path $models 'manifests'
+    if (-not (Test-Path -LiteralPath $manifestRoot -PathType Container)) { return $true }
+    $expected = @(foreach ($manifest in Get-ChildItem -LiteralPath $manifestRoot -Recurse -File -Force) {
+        $parts = $manifest.FullName.Substring($manifestRoot.Length + 1) -split '[\\/]'
+        if ($parts.Count -ge 4 -and $parts[0] -eq 'registry.ollama.ai') {
+            $first = if ($parts[1] -eq 'library') { 2 } else { 1 }
+            ($parts[$first..($parts.Count - 2)] -join '/') + ':' + $parts[-1]
+        }
+    })
+    if (-not $expected.Count) { return $true }
+    $available = @((Invoke-RestMethod -Uri ($address + '/api/tags') -TimeoutSec 8).models | ForEach-Object { $_.name })
+    return @($expected | Where-Object { $_ -notin $available }).Count -eq 0
+}
+
 $process = $null
 if (Test-Path -LiteralPath $pidFile) {
     $knownPid = 0
@@ -39,8 +54,14 @@ if (Test-LocalServer) {
     if (-not $process) {
         throw 'Port 11434 ist bereits von einem KI-Server belegt, der nicht zu dieser Installation gehoert.'
     }
-    Write-Output 'Lokaler CPU-KI-Server bereit. Das Modell wird bei der ersten Anfrage geladen.'
-    exit 0
+    if (Test-ConfiguredModels) {
+        Write-Output 'Lokaler CPU-KI-Server bereit. Das Modell wird bei der ersten Anfrage geladen.'
+        exit 0
+    }
+    Write-Output 'Der laufende eigene KI-Server verwendet einen anderen Modellbestand. Starte ihn mit dem eingerichteten Modellordner neu.'
+    Stop-Process -Id $process.Id
+    Wait-Process -Id $process.Id -ErrorAction SilentlyContinue
+    $process = $null
 }
 
 if (-not $process) {
@@ -64,6 +85,7 @@ if (-not $process) {
 $timer = [Diagnostics.Stopwatch]::StartNew()
 while ($timer.Elapsed.TotalSeconds -lt 35) {
     if (Test-LocalServer) {
+        if (-not (Test-ConfiguredModels)) { throw 'Der KI-Server findet die Modelle des eingerichteten Modellordners nicht. models-location.json und local-ai\logs pruefen.' }
         Write-Output 'Lokaler CPU-KI-Server bereit. Das Modell wird bei der ersten Anfrage geladen.'
         exit 0
     }

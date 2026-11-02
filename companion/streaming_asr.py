@@ -27,6 +27,7 @@ class ContinuousTranscript:
         self.recognizer = recognizer
         self.position = 0
         self.last_voice = -3
+        self.last_signal = -3
         self.previous_words = []
         self.stable = ""
         self.stream = recognizer.create_stream()
@@ -35,6 +36,7 @@ class ContinuousTranscript:
         # supplies the leading context after a deliberate utterance reset.
         self.stream.accept_waveform(16000, np.zeros(12800, dtype=np.float32))
         self._decode()
+        self.last_text = self.recognizer.get_result(self.stream).strip()
 
     def _decode(self):
         decoded = False
@@ -46,11 +48,21 @@ class ContinuousTranscript:
     def accept(self, samples):
         samples = np.asarray(samples, dtype=np.float32)
         self.position += len(samples) / 16000
+        signal = bool(np.any(samples))
+        if signal:
+            self.last_signal = self.position
+        elif self.position - self.last_signal >= 3 and not self.last_text:
+            # A muted virtual cable can otherwise spend as much encoder time as
+            # a second speaker. Skip only exact digital zero, never a quiet
+            # nonzero sample. Keep a full tail after any signal so pending words
+            # can finish, and never skip silence while text awaits an endpoint.
+            return {"partial": "", "stable": "", "final": None}
         if len(samples) and float(np.sqrt(np.mean(samples * samples))) >= .008:
             self.last_voice = self.position
         self.stream.accept_waveform(16000, samples)
         decoded = self._decode()
         text = self.recognizer.get_result(self.stream).strip()
+        self.last_text = text
         if decoded:
             words = text.split()
             count = 0

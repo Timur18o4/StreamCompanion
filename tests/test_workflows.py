@@ -334,12 +334,14 @@ async def test_forget_during_generation_invalidates_the_response(store):
 
 
 @pytest.mark.asyncio
-async def test_slow_generation_cannot_publish_expired_context(store, monkeypatch):
+@pytest.mark.parametrize("provider,seconds", [("compatible", 91), ("local", 151)])
+async def test_slow_generation_cannot_publish_expired_context(store, monkeypatch, provider, seconds):
     engine = ready_engine(store)
+    store.put("settings", store.settings().model_copy(update={"provider": provider}).model_dump())
     clock = {"now": time.time()}
     monkeypatch.setattr("companion.engine.time.time", lambda: clock["now"])
     async def generate(*args):
-        clock["now"] += 91
+        clock["now"] += seconds
         return {"action": "message", "message": "Zu spät", "kind": "comment"}
     engine.ai.generate = generate
     try:

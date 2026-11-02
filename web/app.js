@@ -143,13 +143,15 @@ function renderRuntime() {
   $('#mode-description').textContent = settings.mode === 'automatic' ? runtime.offline_test ? 'Offline-Test: Das Mikrofon wird verarbeitet. Automatische Beiträge erscheinen im echten Twitch-Chat.' : 'Passende Beiträge können automatisch im verbundenen Twitch-Kanal erscheinen.' : 'In der Vorschau entscheidest du, welche Beiträge veröffentlicht werden.';
   $('#run-button').classList.toggle('stop', runtime.running);
   $('#run-button').innerHTML = icon(runtime.running ? 'stop' : 'play') + (runtime.running ? 'Begleiter stoppen' : 'Begleiter starten');
+  const lastModelResult = (runtime.logs || []).find(log => ['Lokales Modell nicht bereit', 'Lokales Modell bereit'].includes(log.title));
+  const modelFailure = runtime.paused && lastModelResult?.title === 'Lokales Modell nicht bereit' ? lastModelResult.message : '';
   $('#pause-button').hidden = !runtime.running;
-  $('#pause-button').textContent = runtime.paused ? 'Weiter zuhören' : 'Pause';
+  $('#pause-button').textContent = runtime.paused ? modelFailure ? 'Modell erneut prüfen' : 'Weiter zuhören' : 'Pause';
   $('#listening-dot').classList.toggle('listening', runtime.running && !runtime.paused);
   $('#character-name').textContent = settings.bot_name;
   $('#character-description').textContent = settings.personality.length > 180 ? settings.personality.slice(0,177) + '…' : settings.personality;
-  $('#character-state').textContent = runtime.demo ? 'Eine Beispielsituation zum Kennenlernen.' : runtime.paused ? 'Macht gerade Pause.' : runtime.running && runtime.analyzing ? `${runtime.analysis_kind === 'memory' ? 'Prüft Erinnerungen' : 'Formuliert gerade'} · ${Math.round(runtime.analysis_seconds)} Sekunden` : runtime.running ? 'Hört zu und behält den Kontext.' : 'Bereit, wenn du es bist.';
-  $('#runtime-reason').textContent = runtime.demo ? 'Diese Demo sendet keine Nachrichten an Twitch.' : runtime.reason;
+  $('#character-state').textContent = runtime.demo ? 'Eine Beispielsituation zum Kennenlernen.' : runtime.paused ? modelFailure ? 'KI-Modell konnte nicht geladen werden.' : 'Macht gerade Pause.' : runtime.running && runtime.analyzing ? `${runtime.analysis_label || (runtime.analysis_kind === 'memory' ? 'Prüft Erinnerungen' : 'Formuliert gerade')} · ${Math.round(runtime.phase_seconds ?? runtime.analysis_seconds)} Sekunden` : runtime.running ? 'Hört zu und behält den Kontext.' : 'Bereit, wenn du es bist.';
+  $('#runtime-reason').textContent = runtime.demo ? 'Diese Demo sendet keine Nachrichten an Twitch.' : modelFailure ? `${modelFailure} Modell: ${settings.text_model}. Modellliste und lokalen Modellordner prüfen.` : runtime.reason;
   $('#stat-sent').textContent = runtime.sent_hour;
   $('#stat-limit').textContent = 'von höchstens ' + settings.max_per_hour;
   $('#stat-memory').textContent = runtime.memories_count;

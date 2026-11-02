@@ -1,4 +1,4 @@
-STREAM COMPANION 0.2.1 - QUELLPAKET
+STREAM COMPANION 0.2.3 - QUELLPAKET
 
 WINDOWS
 1. Python 3.11+ (64 Bit) muss als "python" installiert sein.

@@ -1,4 +1,4 @@
-# Lokale KI mit Version 0.2.1
+# Lokale KI mit Version 0.2.3
 
 Textmodell und Spracherkennung sind zwei getrennte Komponenten. Im Windows-Paket sind deren Python-Bibliotheken enthalten, aber weder Ollama noch Modellgewichte. Der erste Start enthält keine Twitch-Konten, API-Schlüssel oder persönlichen Erinnerungen.
 

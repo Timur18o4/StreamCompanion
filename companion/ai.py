@@ -77,7 +77,51 @@ class AI:
         self.store = store
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(35, connect=8), follow_redirects=False)
         self.last_metrics = {}
+        self.progress = {}
         self.ollama_probe = None
+
+    def time_budget(self, kind="general"):
+        if self.store.settings().provider == "local":
+            return 60 if kind == "memory" else 150
+        return 90
+
+    async def native_response(self, endpoint, payload, headers, options, *, kind, image):
+        """Expose actual output progress and never publish an incomplete stream."""
+        started = time.monotonic()
+        self.progress = {"phase": "context", "kind": kind, "image": image, "phase_started": time.time()}
+        try:
+            async with self.http.stream("POST", endpoint, headers=headers, json=payload, **options) as response:
+                if response.status_code != 200:
+                    raise AIError(f"Lokale KI-Anfrage fehlgeschlagen (HTTP {response.status_code}). Lokalen Server und ausgewähltes Modell prüfen.")
+                if "application/x-ndjson" not in response.headers.get("content-type", ""):
+                    # Compatible implementations may return one complete JSON object.
+                    return json.loads(await response.aread())
+                content, final, first_token = [], None, None
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    chunk = json.loads(line)
+                    if chunk.get("error"):
+                        raise AIError("Der lokale KI-Server hat die Berechnung abgebrochen. Es wurde kein Teiltext veröffentlicht.")
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        if first_token is None:
+                            first_token = time.monotonic() - started
+                            self.progress.update(phase="writing", phase_started=time.time())
+                        content.append(delta)
+                    if chunk.get("done"):
+                        final = chunk
+                        break
+                if final is None:
+                    raise AIError("Die lokale KI-Antwort wurde nicht vollständig empfangen. Es wurde kein Teiltext veröffentlicht.")
+                final["message"] = {"content": "".join(content)}
+                if first_token is not None:
+                    final["first_token_seconds"] = round(first_token, 2)
+                return final
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise AIError("Die lokale KI lieferte keine gültige vollständige Antwort. Es wurde nichts gesendet.") from exc
+        finally:
+            self.progress = {}
 
     async def uses_ollama(self, base):
         if self.ollama_probe and self.ollama_probe[0] == base and time.monotonic() < self.ollama_probe[2]:
@@ -155,8 +199,11 @@ class AI:
             instruction += "\n" + DIRECT_REPLY_INSTRUCTION
         schema = MEMORY_SCHEMA if memory_only else REPLY_SCHEMA if direct else DECISION_SCHEMA
         messages = dialogue_messages(model_context, instruction) if plain else [{"role": "system", "content": instruction}, {"role": "user", "content": user}]
+        if memory_only:
+            profile = {"character": context.get("character") or {"name": settings.bot_name, "account_login": (self.store.profiles()["bot"] or {}).get("login", ""), "personality": settings.personality}, "max_characters": settings.max_message_length}
+            messages = [dialogue_messages(profile, LOCAL_REPLY_SYSTEM)[0], {"role": "system", "content": "Für diese Anfrage gilt ausschließlich die folgende Gedächtnisaufgabe; erzeuge keinen Chatbeitrag und keine Emotes.\n" + LOCAL_MEMORY_SYSTEM}, {"role": "user", "content": user}]
         if plain and not direct:
-            messages[0]["content"] += "\nDu bist gerade nicht direkt angesprochen. Ein eigener Kommentar ist freiwillig: greife nur einen konkreten aktuellen Anlass auf, ohne Standardfrage oder Gesprächsfloskel. Keine Werbung, Moderation oder Aufforderungen an Lurker. Bei einer offenen Frage keine neue Frage beginnen. Bei ruhigem, unvollständigem oder unklarem Kontext exakt __STILL__."
+            messages.insert(1, {"role": "system", "content": "Du bist gerade nicht direkt angesprochen. Greife einen konkreten aktuellen Anlass auf, ohne Standardfrage oder Gesprächsfloskel. Eine Sprechpause darf ein Anlass sein, an ein noch aktuelles Thema anzuknüpfen; Ruhe allein ist kein Grund zu schweigen. Keine Werbung, Moderation oder Aufforderungen an Lurker. Bei einer offenen Frage keine neue Frage beginnen. Fehlt ein belegter passender Gesprächsanlass oder ist der Kontext unklar, gib exakt __STILL__ aus."})
             messages[-1]["content"] = "Prüfe die vorstehenden Beobachtungen auf einen passenden eigenen Beitrag. Gib nur den Chattext aus, sonst __STILL__."
         if plain and screenshot:
             messages[-1]["content"] = [{"type": "text", "text": messages[-1]["content"]}, {"type": "image_url", "image_url": {"url": screenshot, "detail": "low"}}]
@@ -169,14 +216,14 @@ class AI:
         if plain:
             payload["temperature"] = 0.65
         # CPU models can need more time to read a fresh conversation context.
-        options = {"timeout": httpx.Timeout(120, connect=8)} if settings.provider == "local" else {}
+        options = {"timeout": httpx.Timeout(self.time_budget("memory" if memory_only else "general"), connect=8)} if settings.provider == "local" else {}
         native_ollama = settings.provider == "local" and (settings.local_ai_cpu_threads > 0 or await self.uses_ollama(base))
         endpoint = base + "/chat/completions"
         if native_ollama:
             native_messages = [{"role": message["role"], "content": message["content"] if isinstance(message["content"], str) else "\n".join(part["text"] for part in message["content"] if part.get("type") == "text")} for message in messages]
             if screenshot:
                 native_messages[-1]["images"] = [screenshot.split(",", 1)[-1]]
-            payload = {"model": settings.text_model, "messages": native_messages, "stream": False, "think": False, "keep_alive": "2h", "options": {"num_thread": settings.local_ai_cpu_threads, "num_predict": max_tokens, "num_batch": 128, "presence_penalty": 0, "repeat_penalty": 1.05}}
+            payload = {"model": settings.text_model, "messages": native_messages, "stream": True, "think": False, "keep_alive": "2h", "options": {"num_thread": settings.local_ai_cpu_threads, "num_predict": max_tokens, "num_batch": 128, "presence_penalty": 0, "repeat_penalty": 1.05}}
             if not settings.local_ai_cpu_threads:
                 payload["options"].pop("num_thread")
             if not plain:
@@ -185,18 +232,27 @@ class AI:
                 payload["options"]["temperature"] = 0.1 if memory_only else 0.65
             endpoint = base.removesuffix("/v1") + "/api/chat"
         started = time.monotonic()
-        response = await self.http.post(endpoint, headers={"Authorization": "Bearer " + key} if key else {}, json=payload, **options)
-        if response.status_code != 200:
-            if settings.provider == "local":
-                raise AIError(f"Lokale KI-Anfrage fehlgeschlagen (HTTP {response.status_code}). Lokalen Server und ausgewähltes Modell prüfen.")
-            raise AIError(f"KI-Anfrage fehlgeschlagen (HTTP {response.status_code}). Modell, Berechtigung und Guthaben prüfen.")
+        headers = {"Authorization": "Bearer " + key} if key else {}
+        if native_ollama:
+            data = await self.native_response(endpoint, payload, headers, options, kind="memory" if memory_only else "reply" if direct else "general", image=bool(screenshot))
+        else:
+            response = await self.http.post(endpoint, headers=headers, json=payload, **options)
+            if response.status_code != 200:
+                if settings.provider == "local":
+                    raise AIError(f"Lokale KI-Anfrage fehlgeschlagen (HTTP {response.status_code}). Lokalen Server und ausgewähltes Modell prüfen.")
+                raise AIError(f"KI-Anfrage fehlgeschlagen (HTTP {response.status_code}). Modell, Berechtigung und Guthaben prüfen.")
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise AIError("Das Modell lieferte keine gültige Entscheidung. Es wurde nichts gesendet.") from exc
         try:
-            data = response.json()
             raw = (data["message"]["content"] if native_ollama else data["choices"][0]["message"]["content"]).strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-            self.last_metrics = {"kind": "memory" if memory_only else "reply" if direct else "general", "seconds": round(time.monotonic() - started, 2), "input_characters": prompt_characters}
+            self.last_metrics = {"kind": "memory" if memory_only else "reply" if direct else "general", "seconds": round(time.monotonic() - started, 2), "input_characters": prompt_characters, "image_used": bool(screenshot)}
             if native_ollama:
+                if "first_token_seconds" in data:
+                    self.last_metrics["first_token_seconds"] = data["first_token_seconds"]
                 self.last_metrics.update({name: data.get(name, 0) for name in ("prompt_eval_count", "eval_count")})
                 self.last_metrics.update({name + "_seconds": round(data.get(name, 0) / 1e9, 2) for name in ("prompt_eval_duration", "eval_duration", "load_duration")})
             if plain:

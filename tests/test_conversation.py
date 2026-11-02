@@ -188,10 +188,11 @@ def test_dialogue_uses_assistant_turns_and_only_one_current_question():
                            {"source": "bot", "name": "Milo", "text": "Ich meinte den Bogen."}],
                "reply_to": {"name": "Nora", "source": "chat", "text": question}}
     messages = dialogue_messages(context, "Anweisung")
-    assert [message["role"] for message in messages] == ["system", "user", "assistant", "user"]
+    assert messages[0]["role"] == "system"
+    assert [message["role"] for message in messages if message["role"] != "system"] == ["user", "assistant", "user"]
     assert messages[-1]["content"] == "Nora [chat]: " + question
     assert sum(message["content"].count(question) for message in messages) == 1
-    assert messages[2]["content"] == "Ich meinte den Bogen."
+    assert [message["content"] for message in messages if message["role"] == "assistant"] == ["Ich meinte den Bogen."]
 
 
 def test_existing_memory_carries_its_unclear_source_instead_of_only_a_confident_fact():

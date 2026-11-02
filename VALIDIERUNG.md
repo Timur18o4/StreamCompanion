@@ -1,3 +1,15 @@
+# Validierung von Version 0.2.3
+
+188 automatisierte Tests bestanden (317,24 Sekunden, zwei Hinweise aus Testbibliotheken). JavaScript-Syntax und die installierte EXE samt Oberfläche wurden geprüft. Vier zusätzliche Modellordner-Prüfungen unter Windows PowerShell 5.1 bestanden.
+
+Neu: längere digitale Stille vermeidet unnötige ASR-Arbeit; konsistente lokale Zeitgrenzen und Abbruch; getrennte Statusphasen für Kontext und Antwort; gemeinsamer Charakteranfang sowie Vorrang fälliger Gespräche vor Gedächtnisprüfungen. Der Starthelfer erkennt einen eigenen Server mit abweichendem Modellbestand.
+
+Ein getrennter Offline-Test mit echtem lokalem Modell lieferte einen Textentwurf nach 13,19 Sekunden und einen Entwurf zu einem roten Testbild (1280 × 720) nach 23,64 Sekunden. Die Phasen Kontext und Schreiben wurden tatsächlich beobachtet. Kalte Modellvorbereitung: 117,73 Sekunden, außerhalb dieser Werte. Twitch-Versand war gesperrt, Mikrofon und OBS waren aus. Diese Messungen garantieren keine gleichen Zeiten unter Streamlast.
+
+Die zusätzliche Startkorrektur wurde mit dem tatsächlichen lokalen Server geprüft; das Modell wurde wieder gefunden und vorbereitet, beide Audiospuren liefen ohne Paketverluste.
+
+## Vorherige Prüfungen von Version 0.2.1
+
 # Validierung von Version 0.2.1
 
 Stand: 2. November 2026. Geprüfter Windows-Rechner: zwei Xeon E5-2667 v2, 16 physische Kerne / 32 logische Prozessoren und rund 64 GB RAM. OBS blieb in seiner bestehenden Konfiguration aktiv.

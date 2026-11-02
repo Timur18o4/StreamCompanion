@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from unittest.mock import AsyncMock
 
 import httpx
@@ -131,6 +132,8 @@ async def prepared_memory(engine, store):
     await engine.on_chat(chat("@examplebot ich spiele am liebsten Hades."))
     engine.defer_memory(engine.context())
     engine.finish_reply(engine.reply_target())
+    # Memory runs in the cooldown after the conversation attempt has finished.
+    engine.last_analysis = time.time()
 
 
 @pytest.mark.asyncio
@@ -142,7 +145,7 @@ async def test_consented_chat_memory_is_checked_after_the_reply_and_saved_with_i
         def respond(request):
             payload = json.loads(request.content)
             assert set(payload["response_format"]["json_schema"]["schema"]["properties"]) == {"memories"}
-            observed = json.loads(payload["messages"][1]["content"][0]["text"])
+            observed = json.loads(payload["messages"][-1]["content"][0]["text"])
             assert observed["context"][0]["id"] == evidence["id"]
             return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"memories": [{"subject_id": "u1", "fact": "Spielt am liebsten Hades.", "evidence_id": evidence["id"], "confidence": .99}]})}}]})
         await engine.ai.http.aclose()
