@@ -56,7 +56,7 @@ function showModal(content) {
 function collectSettings() {
   const settings = structuredClone(state.settings);
   $$('[data-setting]').forEach(el => {
-    settings[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
+    settings[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.type === 'number' || el.dataset.valueType === 'number' ? Number(el.value) : el.value;
   });
   settings.input_mode = $('input[name="input-mode"]:checked')?.value || settings.input_mode;
   settings.sources = $$('[data-source]').map(row => ({
@@ -82,6 +82,12 @@ async function save(silent = false) {
 }
 
 function hydrate() {
+  const cpuMaximum = Math.max(1, Number(state.capabilities.cpu_threads_max) || 1);
+  const choices = Array.from({length:cpuMaximum}, (_, index) => `<option value="${index+1}">${index+1} ${index ? 'Threads' : 'Thread'}</option>`).join('');
+  $('#whisper-cpu-threads').innerHTML = `<option value="0">Automatisch (${Math.min(8,cpuMaximum)} Threads)</option>` + choices;
+  $('#streaming-cpu-threads').innerHTML = `<option value="0">Automatisch (${Math.min(8,cpuMaximum)} Threads)</option>` + choices;
+  $('#local-ai-cpu-threads').innerHTML = '<option value="0">Modell-Vorgabe</option>' + choices;
+  $('#cpu-thread-info').textContent = `Dieser Rechner stellt ${cpuMaximum} logische Prozessoren bereit. Spracherkennung und Gesprächsmodell teilen sich die Rechenleistung. Änderungen beenden einen laufenden Durchgang.`;
   $$('[data-setting]').forEach(el => {
     const value = state.settings[el.dataset.setting];
     if (el.type === 'checkbox') el.checked = Boolean(value); else el.value = value ?? '';
@@ -97,6 +103,11 @@ function updateProviderFields() {
   $('#base-url-field').hidden = $('#provider').value === 'openai';
   $('#stt-key-field').hidden = $('#stt-provider').value !== 'openai_realtime';
   $('#whisper-field').hidden = $('#stt-provider').value !== 'local_whisper';
+  $('#whisper-cpu-field').hidden = $('#stt-provider').value !== 'local_whisper';
+  $('#streaming-field').hidden = $('#stt-provider').value !== 'local_streaming';
+  $('#streaming-cpu-field').hidden = $('#stt-provider').value !== 'local_streaming';
+  $('#local-cpu-field').hidden = $('#provider').value !== 'local';
+  $('#cpu-settings').hidden = !['local_whisper','local_streaming'].includes($('#stt-provider').value) && $('#provider').value !== 'local';
 }
 
 function renderAccounts() {
@@ -123,13 +134,13 @@ function renderRuntime() {
   const channel = runtime.channel;
   $('#channel-name').textContent = runtime.demo ? 'Beispielstream' : channel.name || settings.channel || 'Dein Twitch-Kanal';
   $('#channel-title').textContent = runtime.demo ? 'Ein neuer Versuch mit dem Bogen · Beispielsituation' : channel.title || 'Die Verbindung beginnt in der Einrichtung.';
-  $('#channel-category').textContent = runtime.demo ? 'Gameplay · Demo' : channel.category || 'Kategorie wird automatisch erkannt';
+  $('#channel-category').textContent = runtime.demo ? 'Gameplay · Demo' : runtime.offline_test ? 'Lokales Audio · Offline-Test' : channel.category || 'Kategorie wird automatisch erkannt';
   $('#channel-avatar').innerHTML = !runtime.demo && channel.profile_image_url ? `<img src="${esc(channel.profile_image_url)}" alt="">` : '↗';
   const badge = $('#live-badge');
-  badge.textContent = runtime.demo ? 'Demo · keine Aufnahme' : channel.live ? 'LIVE' : channel.id ? 'Offline' : 'Noch nicht verbunden';
+  badge.textContent = runtime.demo ? 'Demo · keine Aufnahme' : channel.live ? 'LIVE' : channel.id ? runtime.offline_test ? 'Offline · Test aktiv' : 'Offline' : 'Noch nicht verbunden';
   badge.className = 'badge ' + (runtime.demo ? 'demo' : channel.live ? 'live' : 'neutral');
   $$('.mode-switch button').forEach(el => el.classList.toggle('selected', el.dataset.mode === settings.mode));
-  $('#mode-description').textContent = settings.mode === 'automatic' ? 'Passende Beiträge können automatisch im verbundenen Twitch-Kanal erscheinen.' : 'In der Vorschau entscheidest du, welche Beiträge veröffentlicht werden.';
+  $('#mode-description').textContent = settings.mode === 'automatic' ? runtime.offline_test ? 'Offline-Test: Das Mikrofon wird verarbeitet. Automatische Beiträge erscheinen im echten Twitch-Chat.' : 'Passende Beiträge können automatisch im verbundenen Twitch-Kanal erscheinen.' : 'In der Vorschau entscheidest du, welche Beiträge veröffentlicht werden.';
   $('#run-button').classList.toggle('stop', runtime.running);
   $('#run-button').innerHTML = icon(runtime.running ? 'stop' : 'play') + (runtime.running ? 'Begleiter stoppen' : 'Begleiter starten');
   $('#pause-button').hidden = !runtime.running;
@@ -137,7 +148,7 @@ function renderRuntime() {
   $('#listening-dot').classList.toggle('listening', runtime.running && !runtime.paused);
   $('#character-name').textContent = settings.bot_name;
   $('#character-description').textContent = settings.personality.length > 180 ? settings.personality.slice(0,177) + '…' : settings.personality;
-  $('#character-state').textContent = runtime.demo ? 'Eine Beispielsituation zum Kennenlernen.' : runtime.paused ? 'Macht gerade Pause.' : runtime.running ? 'Hört zu und behält den Kontext.' : 'Bereit, wenn du es bist.';
+  $('#character-state').textContent = runtime.demo ? 'Eine Beispielsituation zum Kennenlernen.' : runtime.paused ? 'Macht gerade Pause.' : runtime.running && runtime.analyzing ? `${runtime.analysis_kind === 'memory' ? 'Prüft Erinnerungen' : 'Formuliert gerade'} · ${Math.round(runtime.analysis_seconds)} Sekunden` : runtime.running ? 'Hört zu und behält den Kontext.' : 'Bereit, wenn du es bist.';
   $('#runtime-reason').textContent = runtime.demo ? 'Diese Demo sendet keine Nachrichten an Twitch.' : runtime.reason;
   $('#stat-sent').textContent = runtime.sent_hour;
   $('#stat-limit').textContent = 'von höchstens ' + settings.max_per_hour;
@@ -147,11 +158,11 @@ function renderRuntime() {
   $('#stat-sources').textContent = activeSources;
   $('#stat-source-label').textContent = activeSources ? 'Werden laufend verarbeitet' : 'Noch keine Quelle aktiv';
   $('#analyze-button').disabled = !runtime.running || runtime.paused || runtime.demo;
-  const signature = runtime.events.map(event => event.id).join(',');
+  const signature = runtime.events.map(event => `${event.id}:${event.version || 0}`).join(',');
   if (signature !== feedSignature || !runtime.events.length) {
     feedSignature = signature;
     if (runtime.events.length) {
-      $('#context-feed').innerHTML = runtime.events.map(event => `<div class="context-item ${event.kind === 'chat' ? 'chat-event' : event.kind === 'bot' ? 'bot-event' : ''}"><span class="event-icon">${icon(event.kind === 'chat' ? 'chat' : event.kind === 'bot' ? 'check' : 'audio')}</span><div><span class="event-label">${esc(event.name)}<span class="event-role">${event.demo ? 'DEMO' : event.kind === 'bot' ? 'Auf Twitch bestätigt' : event.role === 'streamer' ? 'Streamer' : event.role === 'game' ? 'Spielkontext' : event.role === 'conversation' ? 'Gespräch / unbekannte Stimme' : 'Chat'}</span></span><p>${esc(event.text)}</p></div><time class="event-time">${clock(event.time)}</time></div>`).join('');
+      $('#context-feed').innerHTML = runtime.events.map(event => `<div class="context-item ${event.kind === 'chat' ? 'chat-event' : event.kind === 'bot' ? 'bot-event' : ''}"><span class="event-icon">${icon(event.kind === 'chat' ? 'chat' : event.kind === 'bot' ? 'check' : 'audio')}</span><div><span class="event-label">${esc(event.name)}<span class="event-role">${event.demo ? 'DEMO' : event.kind === 'bot' ? 'Auf Twitch bestätigt' : event.provisional ? 'Mitschrift wird ergänzt' : event.role === 'streamer' ? 'Streamer' : event.role === 'game' ? 'Spielkontext' : event.role === 'conversation' ? 'Gespräch / unbekannte Stimme' : 'Chat'}</span></span><p>${esc(event.text)}</p></div><time class="event-time">${clock(event.time)}</time></div>`).join('');
       $('#context-feed').scrollTop = $('#context-feed').scrollHeight;
     } else {
       $('#context-feed').innerHTML = `<div class="empty-state"><span class="empty-icon">${icon('audio')}</span><h3>Hier beginnt das Zuhören.</h3><p>Nach dem Start erscheinen erkannte Aussagen, Chatnachrichten und veröffentlichte Beiträge.</p><button class="text-button" data-action="demo">Eine Beispielsituation ansehen ${icon('arrow')}</button></div>`;
@@ -168,7 +179,8 @@ function renderRuntime() {
   $$('[data-source]').forEach(row => {
     const info = runtime.sources[row.dataset.source];
     row.querySelector('.source-level i').style.width = Math.min(100,(info?.level || 0)*400) + '%';
-    row.querySelector('.source-status').textContent = info ? info.status + (info.dropped ? ` · ${info.dropped} verworfene Puffer` : '') : 'Noch kein Audiosignal';
+    row.querySelector('.source-status').textContent = info ? info.status + (Number.isFinite(info.lag_seconds) && info.lag_seconds >= 1 ? ` · ${info.lag_seconds.toFixed(1)} s Audiopuffer` : '') + (info.dropped ? ` · ${info.dropped} verworfene Puffer` : '') : 'Noch kein Audiosignal';
+    row.querySelector('.source-preview').textContent = info?.partial_text ? `Mitschrift: ${info.partial_text.slice(-220)}` : '';
   });
   $('#logs-list').innerHTML = runtime.logs.length ? runtime.logs.map(log => `<div class="log-item ${esc(log.level)}"><time>${clock(log.time)}</time><i></i><div><b>${esc(log.title)}</b><p>${esc(log.message)}</p></div></div>`).join('') : '<div class="empty-state"><h3>Alles an einem Ort.</h3><p>Verbindungen und Entscheidungen erscheinen nach den ersten Einrichtungsschritten.</p></div>';
 }
@@ -191,7 +203,7 @@ async function refresh(withHydrate = false) {
 
 function renderSources(sources) {
   const roleOptions = (role) => [['streamer','Streamer / Mikrofon'],['conversation','Gespräch / Discord'],['game','Gameplay'],['ignore','Nicht auswerten']].map(([value,label]) => `<option value="${value}" ${role === value ? 'selected' : ''}>${label}</option>`).join('');
-  $('#audio-sources').innerHTML = sources.map(source => `<div class="source-row" data-source="${esc(source.id)}" data-device-name="${esc(source.device_name || '')}"><div><label>Name der Quelle</label><input data-field="name" aria-label="Name der Quelle" value="${esc(source.name)}" maxlength="80" required><label class="check-row"><input type="checkbox" data-field="enabled" ${source.enabled ? 'checked' : ''}>Quelle verwenden</label></div><div><label>Rolle</label><select data-field="role" aria-label="Rolle der Audioquelle">${roleOptions(source.role)}</select><label class="check-row"><input type="checkbox" data-field="remember" ${source.remember ? 'checked' : ''}>Für Streamer-Erinnerungen</label></div><div><label>Aufnahmegerät auf diesem Rechner</label><select data-field="device" aria-label="Aufnahmegerät" data-selected="${source.device ?? ''}"></select><div class="source-level"><i></i></div><span class="source-status">Noch kein Audiosignal</span></div><button class="source-delete" data-action="remove-source" aria-label="Quelle entfernen">${icon('trash')}</button></div>`).join('');
+  $('#audio-sources').innerHTML = sources.map(source => `<div class="source-row" data-source="${esc(source.id)}" data-device-name="${esc(source.device_name || '')}"><div><label>Name der Quelle</label><input data-field="name" aria-label="Name der Quelle" value="${esc(source.name)}" maxlength="80" required><label class="check-row"><input type="checkbox" data-field="enabled" ${source.enabled ? 'checked' : ''}>Quelle verwenden</label></div><div><label>Rolle</label><select data-field="role" aria-label="Rolle der Audioquelle">${roleOptions(source.role)}</select><label class="check-row"><input type="checkbox" data-field="remember" ${source.remember ? 'checked' : ''}>Für Streamer-Erinnerungen</label></div><div><label>Aufnahmegerät auf diesem Rechner</label><select data-field="device" aria-label="Aufnahmegerät" data-selected="${source.device ?? ''}"></select><div class="source-level"><i></i></div><span class="source-status">Noch kein Audiosignal</span><p class="source-preview field-hint"></p></div><button class="source-delete" data-action="remove-source" aria-label="Quelle entfernen">${icon('trash')}</button></div>`).join('');
   updateDeviceOptions();
 }
 

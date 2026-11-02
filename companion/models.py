@@ -1,9 +1,14 @@
+import os
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 Role = Literal["streamer", "conversation", "game", "ignore"]
+
+
+def cpu_threads_max():
+    return max(1, os.cpu_count() or 1)
 
 
 class AudioSource(BaseModel):
@@ -20,19 +25,24 @@ class Settings(BaseModel):
     channel: str = Field(default="", max_length=40)
     twitch_client_id: str = Field(default="", max_length=128)
     bot_name: str = Field(default="Milo", min_length=1, max_length=32)
-    personality: str = Field(default="Locker, aufmerksam und knapp. Interessiert an Entscheidungen im Spiel und an Geschichten aus der Community. Gelegentlich trockener Humor, respektvoll und ohne ständige Fragen.", max_length=3000)
+    spoken_name_aliases: str = Field(default="", max_length=300)
+    personality: str = Field(default="Locker, aufmerksam, mit gelegentlichem trockenem Humor. Interessiert an den Themen des Streamers und der Community, auch außerhalb von Spielen. Mal ein kurzer Spruch, mal eine richtige Erklärung. Konkrete Bezüge statt Floskeln, künstlicher Begeisterung oder ständiger Rückfragen.", max_length=3000)
     provider: Literal["local", "openai", "compatible"] = "local"
     api_base: str = "http://127.0.0.1:11434/v1"
     text_model: str = ""
     transcription_model: str = "gpt-live-transcribe"
-    stt_provider: Literal["openai_realtime", "local_whisper"] = "openai_realtime"
+    stt_provider: Literal["openai_realtime", "local_whisper", "local_streaming"] = "openai_realtime"
     whisper_model: str = Field(default="small", max_length=100)
+    streaming_model: str = Field(default="", max_length=512)
+    streaming_cpu_threads: int = Field(default=0, ge=0)
+    whisper_cpu_threads: int = Field(default=0, ge=0)
+    local_ai_cpu_threads: int = Field(default=0, ge=0)
     mode: Literal["preview", "automatic"] = "preview"
     min_interval: int = Field(default=90, ge=20, le=1800)
     silence_after: int = Field(default=50, ge=15, le=600)
     max_per_hour: int = Field(default=20, ge=1, le=120)
     stream_delay: int = Field(default=0, ge=0, le=180)
-    max_message_length: int = Field(default=240, ge=40, le=450)
+    max_message_length: int = Field(default=340, ge=40, le=450)
     owner_memory: bool = True
     viewer_memory: bool = False
     cloud_chat_permission: bool = False
@@ -41,7 +51,14 @@ class Settings(BaseModel):
     screenshot_interval: int = Field(default=30, ge=10, le=300)
     obs_url: str = "ws://127.0.0.1:4455"
     input_mode: Literal["local", "companion", "twitch"] = "local"
+    offline_test: bool = False
     sources: list[AudioSource] = Field(default_factory=lambda: [AudioSource(id="microphone", name="Mikrofon", remember=True)])
+
+    @field_validator("whisper_cpu_threads", "local_ai_cpu_threads", "streaming_cpu_threads")
+    @classmethod
+    def limit_cpu_threads(cls, value: int) -> int:
+        # Also remains usable when settings move to a smaller computer.
+        return min(value, cpu_threads_max())
 
     @field_validator("channel")
     @classmethod

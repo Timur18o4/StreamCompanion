@@ -1,0 +1,2 @@
+-r requirements-audio.txt
+sherpa-onnx==2.0.1

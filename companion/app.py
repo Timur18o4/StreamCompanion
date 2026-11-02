@@ -17,7 +17,7 @@ from . import __version__
 from .ai import AIError
 from .audio import devices, normalize_image, obs_screenshot
 from .engine import Engine
-from .models import AudioSource, Settings
+from .models import AudioSource, Settings, cpu_threads_max
 from .storage import Store
 from .twitch import TwitchError
 
@@ -98,13 +98,13 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/status", dependencies=[Depends(auth)])
     async def status():
         settings = store.settings()
-        return {"version": __version__, "settings": settings.model_dump(), "profiles": store.profiles(), "oauth": engine.twitch.pending, "secret_status": {name: bool(store.get(name)) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")}, "runtime": engine.snapshot(), "capabilities": {name: importlib.util.find_spec(name) is not None for name in ("sounddevice", "faster_whisper", "mss", "streamlink")}}
+        return {"version": __version__, "settings": settings.model_dump(), "profiles": store.profiles(), "oauth": engine.twitch.pending, "secret_status": {name: bool(store.get(name)) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")}, "runtime": engine.snapshot(), "capabilities": {**{name: importlib.util.find_spec(name) is not None for name in ("sounddevice", "faster_whisper", "sherpa_onnx", "mss", "streamlink")}, "cpu_threads_max": cpu_threads_max(), "whisper_threads_default": min(8, cpu_threads_max())}}
 
     @app.post("/api/settings", dependencies=[Depends(auth)])
     async def save_settings(payload: SettingsInput):
         old = store.settings()
         changed_identity = old.twitch_client_id != payload.settings.twitch_client_id
-        structural = ("channel", "sources", "input_mode", "stt_provider", "provider", "api_base", "text_model", "transcription_model")
+        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "cloud_chat_permission")
         secrets_changed = any(getattr(payload, name) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")) or bool(payload.clear_secrets)
         if engine.running and (secrets_changed or any(getattr(old, key) != getattr(payload.settings, key) for key in structural)):
             await engine.stop()
@@ -178,6 +178,9 @@ def create_app(data_dir: Path | None = None):
         engine.pending = None
         engine.epoch += 1
         engine.last_voice = time.time()
+        engine.clear_provisional()
+        if not engine.paused:
+            engine.begin_model_warmup()
         return {"paused": engine.paused}
 
     @app.post("/api/run/mode", dependencies=[Depends(auth)])
@@ -189,6 +192,7 @@ def create_app(data_dir: Path | None = None):
         store.put("settings", settings.model_dump())
         engine.pending = None
         engine.epoch += 1
+        engine.clear_provisional()
         return {"ok": True}
 
     @app.post("/api/run/analyze", dependencies=[Depends(auth)])
@@ -204,6 +208,7 @@ def create_app(data_dir: Path | None = None):
     @app.post("/api/draft/discard", dependencies=[Depends(auth)])
     async def discard(payload: DraftInput):
         if engine.pending and engine.pending["id"] == payload.id:
+            engine.finish_reply(engine.pending.get("reply_to"))
             engine.pending = None
             engine.last_analysis = time.time()
         return {"ok": True}
@@ -255,12 +260,16 @@ def create_app(data_dir: Path | None = None):
     @app.delete("/api/memories/{memory_id}", dependencies=[Depends(auth)])
     async def memory_delete(memory_id: int):
         store.remove_memory(memory_id, store.settings().channel)
+        engine.revision += 1
+        engine.pending = None
         return {"ok": True}
 
     @app.delete("/api/memories", dependencies=[Depends(auth)])
     async def memory_reset():
         store.forget_channel(store.settings().channel)
         engine.events.clear()
+        engine.reply_requests.clear()
+        engine.memory_backlog.clear()
         engine.pending = None
         engine.last_observation = 0
         engine.epoch += 1

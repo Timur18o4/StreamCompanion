@@ -3,12 +3,14 @@ import base64
 import io
 import json
 import math
+import uuid
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 import websockets
 from PIL import Image, UnidentifiedImageError
+from .models import cpu_threads_max
 
 
 def devices():
@@ -49,13 +51,18 @@ def normalize_image(data: bytes):
 
 @dataclass
 class AudioState:
-    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=30))
+    # Local inference processes up to 12 seconds at once. Keep incoming audio
+    # during that work; 30 capture packets only covered three seconds.
+    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=150))
     task: asyncio.Task | None = None
     level: float = 0
     last_packet: float = 0
     status: str = "Bereit"
     bytes: int = 0
     dropped: int = 0
+    partial_text: str = ""
+    queued_bytes: int = 0
+    streaming: bool = False
 
 
 class Audio:
@@ -66,15 +73,19 @@ class Audio:
         self.processes = []
         self.tasks = []
         self.whisper = None
+        self.whisper_config = None
         self.whisper_lock = asyncio.Lock()
+        self.streaming_recognizer = None
+        self.streaming_config = None
+        self.streaming_lock = asyncio.Lock()
 
     def snapshot(self):
-        return {source: {"level": round(state.level, 3) if time.time() - state.last_packet < 2 else 0, "last_packet": state.last_packet, "status": state.status, "bytes": state.bytes, "dropped": state.dropped} for source, state in self.states.items()}
+        return {source: {"level": round(state.level, 3) if time.time() - state.last_packet < 2 else 0, "last_packet": state.last_packet, "status": state.status, "bytes": state.bytes, "dropped": state.dropped, "partial_text": state.partial_text, "lag_seconds": round(state.queued_bytes / 48000, 2) if state.streaming else None} for source, state in self.states.items()}
 
     def feed(self, source_id, pcm):
         settings = self.engine.store.settings()
         source = next((item for item in settings.sources if item.id == source_id and item.enabled and item.role != "ignore"), None)
-        if not self.engine.running or self.engine.paused or not self.engine.channel.get("live") or time.time() - self.engine.channel_checked > 70 or not source or not pcm or len(pcm) % 2:
+        if not self.engine.running or self.engine.paused or not self.engine.channel_ready() or not source or not pcm or len(pcm) % 2:
             return
         if len(pcm) > 24000 * 2 * 2:
             return
@@ -83,20 +94,25 @@ class Audio:
         state.level = float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0
         state.last_packet = time.time()
         state.bytes += len(pcm)
-        if state.level > 0.015 and source.role == "streamer":
+        if state.level > (0.008 if settings.stt_provider == "local_streaming" else 0.015) and source.role == "streamer":
             self.engine.last_voice = time.time()
         if state.task is None or state.task.done():
             state.task = asyncio.create_task(self.transcribe(source, state))
         if state.queue.full():
-            state.queue.get_nowait()
+            removed = state.queue.get_nowait()
+            state.queued_bytes = max(0, state.queued_bytes - len(removed))
             state.dropped += 1
         state.queue.put_nowait(pcm)
+        if settings.stt_provider == "local_streaming":
+            state.queued_bytes += len(pcm)
 
     async def transcribe(self, source, state):
         state.status = "Verbinde Spracherkennung"
         try:
             settings = self.engine.store.settings()
-            if settings.stt_provider == "local_whisper":
+            if settings.stt_provider == "local_streaming":
+                await self.streaming_transcription(source, state)
+            elif settings.stt_provider == "local_whisper":
                 await self.local_transcription(source, state)
             else:
                 await self.realtime_transcription(source, state)
@@ -169,14 +185,27 @@ class Audio:
                 await asyncio.gather(sender, return_exceptions=True)
 
     async def local_transcription(self, source, state):
+        # sherpa bundles a newer, backwards-compatible Windows ONNX runtime.
+        # Load it first when both optional recognition backends are installed.
+        import os
+        if os.name == "nt":
+            try:
+                import sherpa_onnx
+            except (ImportError, OSError):
+                pass
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
             raise RuntimeError("Lokale Spracherkennung ist nicht installiert. Das Zusatzpaket requirements-whisper.txt installieren.") from exc
         async with self.whisper_lock:
-            if self.whisper is None:
+            settings = self.engine.store.settings()
+            threads = settings.whisper_cpu_threads or min(8, cpu_threads_max())
+            configuration = (settings.whisper_model, threads)
+            if self.whisper is None or self.whisper_config != configuration:
                 state.status = "Lokales Sprachmodell wird geladen"
-                self.whisper = await asyncio.to_thread(WhisperModel, self.engine.store.settings().whisper_model, device="cpu", compute_type="int8")
+                self.whisper = await asyncio.to_thread(WhisperModel, settings.whisper_model, device="cpu", compute_type="int8", cpu_threads=threads)
+                self.whisper_config = configuration
+            whisper = self.whisper
         state.status = "Hört lokal zu"
         buffer = bytearray()
         silence = 0
@@ -191,13 +220,14 @@ class Audio:
             else:
                 silence += len(pcm)
             buffer.extend(pcm)
-            if len(buffer) > 24000 * 2 * 12 or (has_speech and silence > 24000 * 2 * 0.7):
+            # Batch short turns so the legacy recognizer can keep up.
+            if len(buffer) >= 24000 * 2 * 12 or (has_speech and silence > 24000 * 2 * 0.7 and len(buffer) >= 24000 * 2 * 8):
                 data = np.frombuffer(buffer, dtype="<i2").astype(np.float32) / 32768
                 buffer.clear()
                 if has_speech:
                     data = np.interp(np.arange(round(len(data) * 2 / 3)) * 1.5, np.arange(len(data)), data).astype(np.float32)
                     def run():
-                        segments, _ = self.whisper.transcribe(data, language="de", vad_filter=True, beam_size=1)
+                        segments, _ = whisper.transcribe(data, language="de", vad_filter=True, beam_size=1)
                         return " ".join(segment.text for segment in segments).strip()
                     async with self.whisper_lock:
                         text = await asyncio.to_thread(run)
@@ -205,6 +235,72 @@ class Audio:
                         await self.engine.transcript(source, text)
                 has_speech = False
                 silence = 0
+
+    def clear_streaming_buffers(self):
+        for state in self.states.values():
+            if state.streaming:
+                while not state.queue.empty():
+                    state.queue.get_nowait()
+                state.queued_bytes = 0
+                state.partial_text = ""
+
+    async def run_streaming_native(self, function, *args):
+        # A canceled coroutine must not release the recognizer lock while its
+        # native worker is still using the same model.
+        job = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            await asyncio.gather(job, return_exceptions=True)
+            raise
+
+    async def prepare_streaming(self):
+        from .streaming_asr import create_recognizer
+        settings = self.engine.store.settings()
+        configuration = (settings.streaming_model, settings.streaming_cpu_threads or min(8, cpu_threads_max()))
+        async with self.streaming_lock:
+            if self.streaming_recognizer is None or self.streaming_config != configuration:
+                self.streaming_recognizer = await self.run_streaming_native(create_recognizer, *configuration)
+                self.streaming_config = configuration
+            return self.streaming_recognizer
+
+    async def streaming_transcription(self, source, state):
+        from .streaming_asr import ContinuousTranscript
+        state.streaming = True
+        state.status = "Streaming-Sprachmodell wird geladen"
+        recognizer = await self.prepare_streaming()
+        async with self.streaming_lock:
+            session = await self.run_streaming_native(ContinuousTranscript, recognizer)
+        fence = (self.engine.epoch, self.engine.revision)
+        utterance = uuid.uuid4().hex
+        previous = ""
+        state.status = "Hört fortlaufend lokal zu"
+        while True:
+            pcm = await state.queue.get()
+            state.queued_bytes = max(0, state.queued_bytes - len(pcm))
+            if self.engine.paused or not self.engine.running:
+                continue
+            current_fence = (self.engine.epoch, self.engine.revision)
+            async with self.streaming_lock:
+                if current_fence != fence:
+                    session = await self.run_streaming_native(ContinuousTranscript, recognizer)
+                    fence, utterance, previous = current_fence, uuid.uuid4().hex, ""
+                samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+                samples = np.interp(np.arange(round(len(samples) * 2 / 3)) * 1.5, np.arange(len(samples)), samples).astype(np.float32)
+                result = await self.run_streaming_native(session.accept, samples)
+            if current_fence != (self.engine.epoch, self.engine.revision) or self.engine.paused or not self.engine.running:
+                continue
+            state.partial_text = result["partial"][-1000:]
+            state.status = "Hört fortlaufend lokal zu" if state.queued_bytes < 48000 * 3 else "Spracherkennung arbeitet Audio nach"
+            if result["final"]:
+                await self.engine.transcript(source, result["final"], utterance_id=utterance, final=True)
+                async with self.streaming_lock:
+                    session = await self.run_streaming_native(ContinuousTranscript, recognizer)
+                utterance, previous = uuid.uuid4().hex, ""
+                state.partial_text = ""
+            elif result["stable"] and result["stable"] != previous:
+                previous = result["stable"]
+                await self.engine.transcript(source, previous, utterance_id=utterance, final=False)
 
     async def start_local(self):
         try:

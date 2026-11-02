@@ -15,6 +15,7 @@ from PIL import Image
 from companion.app import create_app
 from companion.audio import normalize_image, resample_pcm
 from companion.engine import Engine
+from companion.local_context import compact_context
 from companion.models import AudioSource, Settings
 from companion.sender import create_sender_app, server_address
 from companion.storage import Store
@@ -255,15 +256,118 @@ async def test_stop_during_generation_prevents_late_draft_or_send(store):
 
 
 @pytest.mark.asyncio
-async def test_changed_context_discards_in_flight_response(store):
+async def test_verified_category_change_discards_in_flight_response(store):
     engine = ready_engine(store)
     async def generate(*args):
-        engine.event("chat","Alice","The topic changed",subject_id="u1")
+        engine.twitch.channel = AsyncMock(return_value={**engine.channel, "category": "Another Game"})
+        await engine.check_channel()
         return {"action":"message","message":"An outdated question","kind":"question"}
     engine.ai.generate = generate
     await engine.analyze()
     assert engine.pending is None
     await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_normal_chat_during_generation_does_not_cancel_automatic_message(store):
+    engine = ready_engine(store)
+    settings = store.settings().model_copy(update={"mode": "automatic"})
+    store.put("settings", settings.model_dump())
+    async def generate(*args):
+        engine.event("chat", "Alice", "Der Bogen passt gut.", subject_id="u1")
+        return {"action": "message", "message": "Bleibst du beim Bogen?", "kind": "question"}
+    engine.ai.generate = generate
+    engine.check_channel = AsyncMock()
+    engine.twitch.send = AsyncMock(return_value="confirmed-one")
+    try:
+        await engine.analyze()
+        engine.twitch.send.assert_awaited_once()
+        assert engine.events[-1]["confirmed"] and len(engine.sent_times) == 1
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_automatic_draft_waits_for_voice_pause_and_is_retried(store):
+    engine = ready_engine(store)
+    store.put("settings", store.settings().model_copy(update={"mode": "automatic"}).model_dump())
+    async def generate(*args):
+        engine.last_voice = time.time()
+        return {"action": "message", "message": "Das war knapp.", "kind": "comment"}
+    engine.ai.generate = generate
+    engine.check_channel = AsyncMock()
+    sent = asyncio.Event()
+    async def send(*args):
+        sent.set()
+        return "confirmed-after-pause"
+    engine.twitch.send = AsyncMock(side_effect=send)
+    task = None
+    try:
+        await engine.analyze()
+        assert engine.pending is not None
+        engine.twitch.send.assert_not_awaited()
+        engine.last_voice = time.time() - 5
+        task = asyncio.create_task(engine.conversation())
+        await asyncio.wait_for(sent.wait(), 2)
+        engine.twitch.send.assert_awaited_once()
+        assert engine.pending is None
+    finally:
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_forget_during_generation_invalidates_the_response(store):
+    engine = ready_engine(store)
+    engine.event("chat", "Alice", "Eine Aussage", subject_id="u1")
+    async def generate(*args):
+        await engine.on_chat({"chatter_user_id": "u1", "chatter_user_name": "Alice", "message": {"text": "!forget"}})
+        return {"action": "message", "message": "Ein Bezug auf Alice", "kind": "comment"}
+    engine.ai.generate = generate
+    try:
+        await engine.analyze()
+        assert engine.pending is None
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_generation_cannot_publish_expired_context(store, monkeypatch):
+    engine = ready_engine(store)
+    clock = {"now": time.time()}
+    monkeypatch.setattr("companion.engine.time.time", lambda: clock["now"])
+    async def generate(*args):
+        clock["now"] += 91
+        return {"action": "message", "message": "Zu spät", "kind": "comment"}
+    engine.ai.generate = generate
+    try:
+        await engine.analyze()
+        assert engine.pending is None
+        assert engine.logs[0]["title"] == "KI-Antwort zu spät"
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_local_model_uses_a_bounded_recent_window_without_losing_ui_history(store, monkeypatch):
+    engine = ready_engine(store)
+    # Windows can assign the same timestamp to several sequential observations.
+    now = time.time()
+    monkeypatch.setattr("companion.engine.time.time", lambda: now)
+    try:
+        for index in range(50):
+            engine.event("audio", "Mikrofon", f"Aussage {index}: " + "Ein klarer Satz zum aktuellen Spiel. " * 5, role="streamer", subject_id="owner1")
+        context = engine.context()
+        assert len(context["context"]) <= 30
+        projected = compact_context(context)
+        assert len(projected["context"]) <= 8
+        assert sum(len(row["text"]) for row in projected["context"]) <= 2400
+        assert context["context"][-1]["text"].startswith("Aussage 49:")
+        assert len(engine.events) == 50
+    finally:
+        await engine.close()
 
 
 @pytest.mark.asyncio

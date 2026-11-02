@@ -1,27 +1,53 @@
-# Validierung · 1. November 2026
+# Validierung von Version 0.2.1
 
-## Durchgeführt
+Stand: 2. November 2026. Geprüfter Windows-Rechner: zwei Xeon E5-2667 v2, 16 physische Kerne / 32 logische Prozessoren und rund 64 GB RAM. OBS blieb in seiner bestehenden Konfiguration aktiv.
 
-- **39 automatisierte Tests bestanden** in einer neu angelegten Windows-Python-Umgebung, installiert aus den mitgelieferten Anforderungen. Eine Warnung betraf die künftig geänderte TestClient-Anbindung von Starlette; keine fehlgeschlagenen Tests.
-- Python-Dateien kompiliert und beide JavaScript-Dateien auf Syntax geprüft.
-- Lokale Oberfläche im Browser geöffnet; Demo, Speichern der Einrichtung, zusätzliche Audioquelle, Rollen und responsive Darstellung geprüft. Keine automatisierte Twitch-Anmeldung und keine Mikrofonfreigabe im Browser durchgeführt.
-- Geräteauflistung auf dem Windows-PC geprüft, ohne eine Aufnahme zu starten.
-- Frischer Erststart über den mitgelieferten Installer/Launcher geprüft. Wiederverwendung einer eigenen Instanz und Abweisung eines anderweitig belegten Ports sind vorgesehen; für den parallelen Test wurde ein anderer Port verwendet.
-- PC-Sender separat gestartet und über einen einmaligen Code mit einem lokalen Workspace gekoppelt. Der Senderzugang wird nicht als allgemeiner Workspace-Zugang akzeptiert.
-- Portables Windows-Programm gebaut und als EXE gestartet. HTTP-Start, authentifizierter Status, Oberfläche, Geräteauflistung und Demo geprüft.
-- Der im Windows-Paket enthaltene Streamlink-Worker meldete seine Version erfolgreich. Das ist kein Nachweis eines erfolgreichen Twitch-Streamempfangs.
+## Software und Windows-Programm
 
-Die automatischen Tests prüfen insbesondere Device-Code-Anmeldung, rotierende Tokens, Kanalbesitzerprüfung, EventSub-Wiederverbindung und Duplikate, das Echtzeit-Audioformat, Quellenzuordnung, getrennte Übertragung von Audio und optionalen Bildern, Vorschau, bestätigten Versand, Stop, Kontextwechsel, veraltete Vorschläge, Opt-in und Löschung.
+**175 automatisierte Tests bestanden**, Laufzeit 292,91 Sekunden. Zwei Hinweise kamen aus Testbibliotheken; kein Test schlug fehl.
 
-## Bewusst noch nicht als live bestätigt
+Geprüft wurden unter anderem direkte Ansprachen, Rückfragen ohne erneutes `@`, Vorrang für Chatantworten, gesprochene Nachträge, Pause und Stop während laufender Berechnungen, begrenzte Kontexte, Einwilligung und Vergessen, getrennte Personen-Zuordnung, unsichere Gedächtnisbelege und die Vorbereitung großer lokaler Modelle.
 
-- Freigaben mit den tatsächlichen Twitch-Konten und einer registrierten Twitch-App.
-- Tatsächliche KI-Antworten und Live-Spracherkennung über einen bezahlten API-Zugang.
-- Mikrofon-, Voicemeeter- oder Gesprächsaufnahmen; es wurden für Tests keine privaten Audiodaten aufgenommen.
-- Tatsächliche Veröffentlichung in einem Twitch-Kanal.
-- OBS-Verbindung und Bildinhaltserkennung im echten Stream.
-- Empfangen eines echten Twitch-Livestreams über Streamlink/FFmpeg.
-- Laufzeit, Installation und Leistung auf einem physischen Raspberry Pi.
-- Inhaltliche Zuverlässigkeit des gewählten KI-Modells, Ironie und Personenidentität in gemischtem Audio.
+Die gebaute Windows-EXE wurde gestartet und meldete Version 0.2.1. Twitch-Chat und Mikrofon waren verbunden, das lokale Gesprächsmodell wurde erfolgreich vorbereitet. Der abschließende Vorschautest verarbeitete rund 17,4 MB Audiodaten ohne Paketverluste, protokollierte Warnungen oder Fehler. Am Prüfende bestand kein Audio-Rückstand. Dieser Durchlauf bestätigt Aufnahme und Verbindungen, keinen neuen tatsächlichen Twitch-Versand.
 
-Anmelde- und Modellantworten in den automatischen Tests sind simuliert. Die integrierte Demo ist klar als Beispielsituation markiert und führt keine KI-Anfrage oder Twitch-Veröffentlichung aus.
+Die App ist ein Vorabstand. Der Download enthält keine persönlichen Einstellungen, Konten, Notizen oder Modellgewichte. Das individuelle Testprofil wird daher nicht automatisch auf andere Rechner übertragen.
+
+## Lokales Modell und gleichzeitige Sprachverarbeitung
+
+Ausgewählt wurde Gemma 4 26B mit CPU-Ausführung. Im geprüften Profil: acht Modell-Threads, acht Nemotron-ASR-Threads, 4.096 Token Modellkontext, höchstens 340 Zeichen pro Beitrag und deaktivierte spekulative Vorhersage (`draft_num_predict: 0`). Die GPU-Speicherbelegung des Gesprächsmodells wurde mit null bestätigt.
+
+Ein 20-minütiger Vergleich mit fortlaufender Spracherkennung ergab:
+
+| Modell-Threads | Spekulative Vorhersage | Modellantworten | Mittel je Modellantwort | Ausgabe in Tokens/s |
+|---:|---:|---:|---:|---:|
+| 8 | aus | 13 | 17,59 s | 6,12 |
+| 8 | an | 11 | 22,63 s | 4,29 |
+| 16 | aus | 13 | 16,80 s | 6,12 |
+| 16 | an | 12 | 17,90 s | 5,22 |
+
+Die Texte wurden frei erzeugt und waren unterschiedlich lang. Die Tabelle ist kein Vergleich identischer Antworten und garantiert keine bestimmte Antwortzeit. Einmalige Vorbereitungsanfragen wurden nicht als Modellantworten gezählt.
+
+Insgesamt: **91 abgeschlossene Sprachaussagen, 49 Modellantworten, keine verworfenen Audiopakete und keine Laufzeitfehler**. Der höchste Audiopuffer über alle Einstellungen betrug 2,1 Sekunden, bei acht Threads ohne spekulative Vorhersage 0,7 Sekunden. Die Sprachdaten waren wiederholte, künstlich erzeugte deutsche Beispielsätze. Das prüft die Verarbeitung unter gleichzeitiger Last, nicht jede natürliche Stimme oder die Last jedes Spiels.
+
+## Durchgängige Reaktionsproben
+
+Diese Prüfungen verwendeten echte lokale Spracherkennung und das echte Gesprächsmodell mit einem getrennten Testdatenbestand. Der Twitch-Versand war ersetzt; es wurden keine erfundenen Testgespräche veröffentlicht.
+
+| Probe | Erster vorläufiger Text | Entwurf nach Sprachende | Audiopuffer maximal | Paketverluste |
+|---|---:|---:|---:|---:|
+| Direkte Frage mit Charakternamen | 1,81 s | 22,77 s | 0,4 s | 0 |
+| Spontaner Kommentar ohne Namen | 1,22 s | 18,81 s | 0,4 s | 0 |
+
+Die Beispiele unterscheiden sich und sind kein kontrollierter Vorher/Nachher-Vergleich. Die einmalige Vorbereitung lag außerhalb dieser Reaktionszeiten. Ein kaltes Neuladen des großen Modells dauerte in einer separaten Messung rund 93 Sekunden.
+
+Eine zusätzliche Gesprächsprobe führte sechs Beiträge von zwei Personen durch die tatsächliche Engine mit ersetztem Twitch-Transport. Rückfragen ohne erneute Erwähnung wurden erkannt, eine Brot-Sorte blieb der richtigen Person zugeordnet, und eine unbekannte persönliche Spielvorliebe wurde nicht als bekannter Fakt ausgegeben. Dies sind einzelne geprüfte Beispiele, keine Garantie gegen erfundene Modellantworten.
+
+## Grenzen
+
+- Die Prüfung belegt weder dieselbe Qualität noch dieselbe Reaktionszeit wie OpenAI.
+- Bilder und Discord waren im abschließenden lokalen Profil ausgeschaltet. OBS-Bildkontext im echten Stream ist nicht abschließend geprüft.
+- Alle Voicemeeter-Routings, ein physischer Raspberry Pi und der Empfang eines echten Twitch-Streams über Streamlink sind nicht abschließend geprüft.
+- Das lokale Modell kann weiterhin sachlich falsch oder unpassend antworten. Eine zuverlässige Sprecheridentität, Ironieerkennung oder inhaltlich fehlerfreie Erinnerung ist nicht garantiert.
+- Reaktionszeit, Startzeit und Speicherbedarf hängen von Modell, Hardware und paralleler Last ab.
+
+Einrichtung: [README.md](README.md) und [LOKALE-KI.md](LOKALE-KI.md).

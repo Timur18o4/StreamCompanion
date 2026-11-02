@@ -1,4 +1,4 @@
-STREAM COMPANION 0.1.0
+STREAM COMPANION 0.2.1 - QUELLPAKET
 
 WINDOWS
 1. Python 3.11+ (64 Bit) muss als "python" installiert sein.
@@ -20,5 +20,8 @@ OPTIONALER PC-SENDER
 3. Workspace-Adresse und Verbindungscode eintragen, Quellen wählen.
 4. Sender bereitstellen, dann im Workspace den Begleiter starten.
 
-Noch kein echter Twitch-Livetest mit deinen Konten durchgeführt.
+Eigene Twitch-Konten und KI-Modelle werden separat eingerichtet.
+Lokale fortlaufende Spracherkennung: siehe LOKALE-KI.md.
+Pause unterbricht auch Audio; Weiter zuhoeren setzt den Begleiter fort.
 Für Einrichtung, Datenablage und bekannte Grenzen README.md lesen.
+Prüfstand: VALIDIERUNG.md.

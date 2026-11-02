@@ -1,12 +1,16 @@
-# Stream Companion · erste Testversion 0.1.0
+# Stream Companion · Version 0.2.1
 
 Ein Gesprächsbegleiter für einen eigenen Twitch-Kanal. Er verarbeitet laufend Audio, berücksichtigt Chat und Kategorie und erzeugt kurze Kommentare oder Fragen. Ein eigener Bot-Account schreibt in den Chat. Die Oberfläche läuft lokal auf einem Windows-PC oder auf einem Raspberry/Linux-Rechner und lässt sich im Browser bedienen.
 
 **Dies ist eine funktionsfähige erste Testversion mit echten Integrationen.** Die Twitch-Anmeldung und KI-Verarbeitung benötigen deine eigenen Zugänge. Eine durchlaufene Demo ist kein Nachweis eines erfolgreichen Livebetriebs. Es wurde nichts aus dem früheren Kick-Projekt übernommen, insbesondere keine Zugangsdaten.
 
+Version 0.2.1 verbessert lokale Gespräche: bestätigte Frage-Antwort-Verläufe bleiben im Kontext, Rückfragen desselben Chatteilnehmers können ohne erneute Erwähnung beantwortet werden, und kurze Nachträge ergänzen eine laufende Anfrage. Direkte Antworten und spontane Kommentare verwenden normale Dialogrollen und freien Chattext; Antwortlänge und CPU-Threads lassen sich einstellen. Fortlaufende lokale Spracherkennung mit Nemotron ist enthalten. Fragen und hypothetische Aussagen gelten nicht als Gedächtnisbelege. Ein identischer Qualitätsstand gegenüber einem Cloudmodell ist damit nicht nachgewiesen.
+
+[Downloads für v0.2.1](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.2.1) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+
 ## Windows: portables Paket
 
-Im separaten Paket **StreamCompanion-Windows-v0.1.0.zip** ist die Python-Laufzeit bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich.
+Im separaten Paket **StreamCompanion-Windows-v0.2.1.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
 
 Die folgenden Installationsbefehle und die `.venv`-Anweisungen beziehen sich auf das **Quellpaket**. Im portablen Paket werden keine zusätzlichen Python-Pakete über `Start.cmd` installiert.
 
@@ -81,6 +85,12 @@ Quellen: [OpenAI Echtzeit-Transkription](https://developers.openai.com/api/docs/
 
 ## Audioquellen: drei Betriebsarten
 
+### Fortlaufende lokale Spracherkennung
+
+Unter Einrichtung lässt sich **Lokal · fortlaufend (Nemotron)** auswählen. Zusatzpaket: `pip install -r requirements-streaming.txt`. Benötigt wird der entpackte Ordner des [mehrsprachigen Nemotron-Streaming-Modells für sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/nemo/nemotron-streaming.html) mit `encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx` und `tokens.txt`. Dieser Pfad und die CPU-Threads werden in der Einrichtung gespeichert. Das Modell läuft mit CPU-Ausführung; im laufenden Betrieb werden dafür weder API-Schlüssel noch ein Cloud-Dienst verwendet. [NVIDIA-Modellkarte und Lizenz](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b).
+
+Die Erkennung behält ihren Zustand während des Sprechens. Vorläufiger Text wird in derselben Beobachtung ergänzt und kann sich noch ändern. Erst abgeschlossene Aussagen dürfen Gedächtnisnotizen belegen. Aufnahme und Auswertung müssen nicht auf feste 8–12-Sekunden-Blöcke warten. Eine ausdrückliche Ansprache des Charakters im Streamer-Mikrofon wird nach Abschluss bevorzugt beantwortet; Gesprächs- und Spielspuren werden dafür nicht als Streamer ausgegeben. Pause verwirft ausstehende vorläufige Daten. Bei wachsendem Rückstand wird die Pufferdauer angezeigt. Die Text- und Bild-KI bleibt ein getrenntes lokales Modell; dies ist kein vollständiger Ersatz für ein Audio-Gesprächsmodell und kein Nachweis derselben Qualität wie ein Cloud-Dienst. Whisper bleibt als alternative Erkennung auswählbar.
+
 ### Direkt auf dem Rechner
 
 „Direkt auf diesem Rechner“ auswählen und die verfügbaren Aufnahmegeräte zuordnen. Voicemeeter-Ausgänge können als eigene Geräte ausgewählt werden, wenn dein Routing sie getrennt bereitstellt. Ein gemischter Ausgang wird nicht nachträglich zuverlässig in Mikrofon, Discord und Spiel zerlegt.
@@ -125,11 +135,23 @@ Unter „Audio & Bild“ Bildkontext einschalten und eine Bildquelle wählen:
 
 Es wird höchstens ein aktuelles, verkleinertes Bild an eine Gesprächsanfrage angehängt. Veraltete Bilder werden ausgelassen. Eine vollständige Videoanalyse und eine schnelle Mehrbild-Sequenzanalyse sind noch nicht enthalten. Ein KI-Modell kann Bilddetails falsch verstehen.
 
+## Ohne Livestream testen
+
+Unter **Audio & Bild → Offline-Test mit lokalem Mikrofon aktivieren** kann der Begleiter bei einem offline gemeldeten Kanal zuhören und den echten Twitch-Chat verwenden. Das gilt ausschließlich für **Direkt auf diesem Rechner**. Der echte Livestatus bleibt in der Oberfläche erkennbar; die letzte Streamkategorie wird in diesem Test nicht als aktueller Spielkontext verwendet. Standardmäßig ist die Option ausgeschaltet.
+
+Nach dem Speichern den Begleiter starten. Im Automatikmodus können reguläre Nachrichten auch im Offline-Chat erscheinen; in der Vorschau ist weiter eine manuelle Freigabe nötig. Pause, Stop, Stundenlimit, Nachrichtenabstände und die Prüfung der Twitch-Verbindung gelten weiterhin. Eine Änderung dieser Option beendet den laufenden Durchgang. Der PC-Sender und der Empfang aus Twitch benötigen weiterhin einen Livestream.
+
+Für falsch erkannte Charakternamen lassen sich unter **Einrichtung → 4 → Erkannte Namensvarianten am Mikrofon** ausdrückliche Varianten durch Kommas getrennt hinterlegen. Sie gelten nur für abgeschlossene Aussagen der als Streamer konfigurierten Spur. Originaltext, Chat-Namensprüfung und die Identität des Charakters bleiben erhalten. Es wird keine Stimme biometrisch erkannt.
+
 ## Gesprächssteuerung
 
-Einstellbar sind Mindestabstand, höchstens veröffentlichte Beiträge pro Stunde, eine ruhige Phase als Prüf-Anlass und eine zusätzliche Versandverzögerung. Die KI darf bewusst schweigen. Sie bekommt die letzten Beobachtungen sowie eine begrenzte Auswahl relevanter Erinnerungen. Neue Informationen können bereits formulierte Beiträge ungültig machen; veraltete Vorschläge werden nicht veröffentlicht.
+Einstellbar sind Mindestabstand, höchstens veröffentlichte Beiträge pro Stunde, eine ruhige Phase als Prüf-Anlass und eine zusätzliche Versandverzögerung. Die KI darf bewusst schweigen. Sie bekommt die letzten Beobachtungen sowie eine begrenzte Auswahl relevanter Erinnerungen. Neue Chatnachrichten und Transkripte laufen während der Berechnung weiter und verwerfen einen Beitrag nicht pauschal. Stop, Pause, Datenlöschungen sowie verifizierte Kanal-, Kategorie- oder Livestatuswechsel können einen Beitrag weiterhin ungültig machen. Vorschläge verfallen spätestens 90 Sekunden nach Beginn ihrer Berechnung. Ein fertiger automatischer Beitrag wartet bei Bedarf auf eine Sprechpause und wird dann erneut zum Versand geprüft.
 
-Die erste Version erkennt Antworten auf offene Fragen grob über neue menschliche Chat- oder Streameraussagen. Sie identifiziert keine Sprecher biometrisch und garantiert keine zuverlässige Ironie-, Konzentrations- oder Abwesenheitserkennung. Das Gesprächsgefühl muss mit realen Streams kalibriert werden.
+Die Anwendung erkennt Antworten auf offene Fragen grob über neue menschliche Chat- oder Streameraussagen. Sie identifiziert keine Sprecher biometrisch und garantiert keine zuverlässige Ironie-, Konzentrations- oder Abwesenheitserkennung. Das Gesprächsgefühl muss mit realen Streams kalibriert werden. Lokale spontane Kommentare erhalten höchstens vier aktuelle Beobachtungen mit insgesamt bis zu 1.200 Textzeichen und eine kleine Auswahl relevanter Erinnerungen. Direkte Antworten erhalten einen größeren, auf die angesprochene Person begrenzten Dialogausschnitt. Der übrige Verlauf und die gespeicherten Erinnerungen werden dadurch nicht gelöscht. Während der Berechnung zeigt die Oberfläche die verstrichene Zeit an.
+
+**Ansprachen und Erwähnungen:** `@Botaccount`, der vollständige Accountname, der eingestellte Charaktername und Twitch-Antworten auf Bot-Nachrichten werden bevorzugt geprüft. Die betreffende Nachricht bleibt für diese Antwort im Modellkontext, auch wenn inzwischen neue Audioabschnitte eintreffen. Der Bot antwortet über die Twitch-Antwortfunktion auf die ursprüngliche Nachricht. Ein allgemeiner Vorschlag macht dafür Platz. Eine offene Bot-Frage oder laufende Streamersprache blockiert diese gezielte Antwort nicht; mindestens 20 Sekunden Abstand, Stundenlimit, Pause und bestätigter Livestatus gelten weiter; für lokale Tests ist der ausdrücklich aktivierte Offline-Test vorgesehen. Vorschau veröffentlicht auch solche Antworten erst nach Freigabe. Ohne Freigabe für externe Chatverarbeitung werden sie nicht an externe Modelle gegeben. Ansprachen werden höchstens drei Minuten berücksichtigt; jede wird nur einmal beantwortet oder bewusst ausgelassen. Reine Pronomen wie „er“ ohne Namensbezug werden nicht gezielt zugeordnet. Die Rechenzeit des gewählten Modells bleibt bestehen.
+
+Gezielte lokale Antworten verwenden die angesprochene Nachricht und einen begrenzten Verlauf mit bisherigen bestätigten Bot-Antworten. Persönliche Erinnerungen werden der fragenden Person und ausdrücklich genannten anderen Personen zugeordnet. Eine allgemeine KI-Anfrage oder eine nachgelagerte Gedächtnisprüfung macht für eine neue Ansprache Platz. Der Server kann dabei noch seinen laufenden Rechenblock beenden. Gedächtnisprüfungen erfolgen getrennt mit niedrigerer Priorität; dieselbe Aussage wird nicht wiederholt eingereiht. Stop, Datenlöschung und Opt-out entfernen ausstehende Notizen; vor dem Speichern werden Freigabe und Beleg nochmals geprüft. Die Vorbereitung eines großen lokalen Gesprächsmodells wird gesondert angezeigt und beim Start oder Fortsetzen ausgeführt.
 
 Das Stundenlimit begrenzt **veröffentlichte Nachrichten**, nicht die Zahl oder Kosten der KI-Anfragen. Die Audioverarbeitung kann auch in längeren ruhigen Phasen Kosten verursachen. Alle genauen Reaktionszeiten und Kosten hängen von Modell, Hardware, Quellen und Nutzung ab.
 
@@ -197,6 +219,8 @@ Automatische Tests:
 
 Es gibt Tests für Oberfläche/API, Zugangsschutz, verschlüsselte Tokenablage, Kanalbesitzerprüfung, Device-Code-Anmeldung mit simulierten Twitch-Antworten, rotierende Refresh-Tokens, Chat-Wiederverbindung und Duplikate, Audioformat/Transkriptzuordnung, Sender-Kopplung, Vorschau, bestätigten Versand, Stop, veraltete Beiträge, Bildprüfung, Quellenrollen und Gedächtnis-Opt-in.
 
-**Nicht als live bestätigt:** Twitch-Freigabe mit deinen echten Konten, echte KI- und Audioanfragen, Mikrofon-/Voicemeeter-Erfassung, OBS-Verbindung, Raspberry-Leistung und Streamlink-Empfang. Ohne deine manuellen Anmeldungen und gewählten Zugänge lassen sich diese Punkte nicht abschließend prüfen. Es gibt keine automatische Account-Erstellung, Viewer-Boosts, Abo-Abrechnung oder Produktionsfreigabe als öffentlicher Dienst.
+**Geprüft:** 175 automatisierte Tests, lokale Spracherkennung und Gesprächsmodelle auf einem Windows-PC, ein 20-minütiger Belastungstest ohne verworfene Audiopakete sowie die gestartete Windows-EXE mit Mikrofon und Twitch-Verbindung. Die abschließenden Gesprächsproben verwendeten einen ersetzten Twitch-Versand; sie bestätigen keinen neuen echten Chatbeitrag. Details und gemessene Zeiten stehen in [VALIDIERUNG.md](VALIDIERUNG.md).
+
+**Nicht abschließend geprüft:** OBS-Bildkontext im echten Stream, sämtliche Voicemeeter-Routings, Raspberry-Leistung und Empfang eines echten Twitch-Streams. Eigene Konten und Modelle müssen eingerichtet werden. Es gibt keine automatische Account-Erstellung, Viewer-Boosts, Abo-Abrechnung oder Produktionsfreigabe als öffentlicher Dienst.
 
 Der Charakter ist als KI-Begleiter erkennbar. Er muss sich auf Nachfrage wahrheitsgemäß erklären und erhält keine erfundene menschliche Biografie.

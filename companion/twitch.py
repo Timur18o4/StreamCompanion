@@ -150,11 +150,14 @@ class Twitch:
         meta = info["data"][0] if info.get("data") else {}
         return {"id": profile["id"], "name": profile["display_name"], "login": profile["login"], "title": meta.get("title", ""), "category": meta.get("game_name", ""), "live": bool(live.get("data")), "profile_image_url": profile.get("profile_image_url", "")}
 
-    async def send(self, channel_id, text):
+    async def send(self, channel_id, text, *, reply_parent_message_id=None):
         bot = self.store.profiles()["bot"]
         if not bot:
             raise TwitchError("Kein Bot-Account verbunden.")
-        result = await self.request("POST", "chat/messages", role="bot", json={"broadcaster_id": channel_id, "sender_id": bot["id"], "message": text})
+        message = {"broadcaster_id": channel_id, "sender_id": bot["id"], "message": text}
+        if reply_parent_message_id:
+            message["reply_parent_message_id"] = reply_parent_message_id
+        result = await self.request("POST", "chat/messages", role="bot", json=message)
         sent = (result.get("data") or [{}])[0]
         if not sent.get("is_sent"):
             reason = (sent.get("drop_reason") or {}).get("message", "Nachricht nicht angenommen.")
