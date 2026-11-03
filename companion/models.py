@@ -24,6 +24,16 @@ class AudioSource(BaseModel):
 class Settings(BaseModel):
     channel: str = Field(default="", max_length=40)
     twitch_client_id: str = Field(default="", max_length=128)
+    chat_source: Literal["twitch", "multichat"] = "twitch"
+    multichat_url: str = "http://localhost:8765/events"
+    output_mode: Literal["text", "speech"] = "text"
+    tts_engine: Literal["windows", "piper"] = "windows"
+    tts_voice: str = Field(default="", max_length=256)
+    tts_device: int | None = None
+    tts_device_name: str = Field(default="", max_length=256)
+    tts_device_host: str = Field(default="", max_length=100)
+    tts_rate: float = Field(default=1.0, ge=0.5, le=2.0)
+    tts_volume: float = Field(default=0.7, ge=0, le=1)
     bot_name: str = Field(default="Milo", min_length=1, max_length=32)
     spoken_name_aliases: str = Field(default="", max_length=300)
     personality: str = Field(default="Locker, aufmerksam, mit gelegentlichem trockenem Humor. Interessiert an den Themen des Streamers und der Community, auch außerhalb von Spielen. Mal ein kurzer Spruch, mal eine richtige Erklärung. Konkrete Bezüge statt Floskeln, künstlicher Begeisterung oder ständiger Rückfragen.", max_length=3000)
@@ -79,6 +89,15 @@ class Settings(BaseModel):
             raise ValueError("Ungültige KI-Serveradresse.")
         if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("Externe KI-Server benötigen HTTPS.")
+        return value.rstrip("/")
+
+    @field_validator("multichat_url")
+    @classmethod
+    def check_multichat_url(cls, value: str) -> str:
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.username or parsed.password or parsed.fragment or parsed.query:
+            raise ValueError("MultiChat muss eine lokale HTTP-Adresse ohne Zugangsdaten sein.")
         return value.rstrip("/")
 
     @field_validator("sources")

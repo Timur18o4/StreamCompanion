@@ -3,6 +3,7 @@ import base64
 import importlib.util
 import secrets
 import time
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .ai import AIError
 from .audio import devices, normalize_image, obs_screenshot
+from .speech import output_devices
 from .engine import Engine
 from .models import AudioSource, Settings, cpu_threads_max
 from .storage import Store
@@ -37,6 +39,10 @@ class DraftInput(BaseModel):
 
 class MemoryInput(BaseModel):
     fact: str = Field(min_length=3, max_length=600)
+
+
+class VoiceInput(BaseModel):
+    voice: str = Field(min_length=1, max_length=100)
 
 
 class PairInput(BaseModel):
@@ -104,8 +110,10 @@ def create_app(data_dir: Path | None = None):
     async def save_settings(payload: SettingsInput):
         old = store.settings()
         changed_identity = old.twitch_client_id != payload.settings.twitch_client_id
-        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "viewer_memory_mode", "cloud_chat_permission")
+        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "viewer_memory_mode", "cloud_chat_permission", "chat_source", "multichat_url", "output_mode", "tts_engine", "tts_voice", "tts_device", "tts_device_name", "tts_device_host", "tts_rate", "tts_volume")
         secrets_changed = any(getattr(payload, name) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")) or bool(payload.clear_secrets)
+        if engine.speech.task and any(getattr(old, key) != getattr(payload.settings, key) for key in structural):
+            engine.speech.stop()
         if engine.running and (secrets_changed or any(getattr(old, key) != getattr(payload.settings, key) for key in structural)):
             await engine.stop()
         if changed_identity:
@@ -175,6 +183,8 @@ def create_app(data_dir: Path | None = None):
     @app.post("/api/run/pause", dependencies=[Depends(auth)])
     async def pause():
         engine.paused = not engine.paused
+        if engine.paused:
+            engine.speech.stop()
         engine.pending = None
         engine.epoch += 1
         engine.last_voice = time.time()
@@ -225,6 +235,33 @@ def create_app(data_dir: Path | None = None):
     @app.post("/api/ai/test", dependencies=[Depends(auth)])
     async def ai_test():
         return await engine.ai.test()
+
+    @app.get("/api/tts/devices", dependencies=[Depends(auth)])
+    async def tts_devices():
+        return {"devices": await asyncio.to_thread(output_devices)}
+
+    @app.get("/api/tts/voices", dependencies=[Depends(auth)])
+    async def tts_voices():
+        return await engine.speech.voices()
+
+    @app.post("/api/tts/install", dependencies=[Depends(auth)])
+    async def tts_install(payload: VoiceInput):
+        try:
+            return await engine.speech.install(payload.voice)
+        except httpx.HTTPError as exc:
+            raise ValueError("Die Stimme konnte nicht heruntergeladen werden. Internetverbindung pruefen.") from exc
+
+    @app.post("/api/tts/test", dependencies=[Depends(auth)])
+    async def tts_test():
+        if engine.running or engine.speech.task:
+            raise ValueError("Bitte den Begleiter fuer den Stimmtest stoppen.")
+        await engine.speech.say("Hallo, hier spricht dein Stream Companion. Das ist ein Test der ausgewaehlten Stimme.")
+        return {"ok": True}
+
+    @app.post("/api/tts/stop", dependencies=[Depends(auth)])
+    async def tts_stop():
+        engine.speech.stop()
+        return {"ok": True}
 
     @app.get("/api/audio/devices", dependencies=[Depends(auth)])
     async def audio_devices():

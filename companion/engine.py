@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from .ai import AI, AIError
 from .audio import Audio, obs_screenshot
+from .multichat import MultiChat
+from .speech import Speech
 from .twitch import Twitch, TwitchError
 from .mentions import addressed_to_bot, reply_key, REPLY_LIFETIME, DIRECT_REPLY_INTERVAL
 from .conversation import combine_request, conversation_followup, memory_candidate
@@ -62,6 +64,8 @@ class Engine:
         self.twitch = Twitch(store, self.notify)
         self.ai = AI(store)
         self.audio = Audio(self)
+        self.multichat = MultiChat(store, self.notify)
+        self.speech = Speech(store)
 
     async def notify(self, level, title, message):
         self.logs.appendleft({"id": uuid.uuid4().hex, "time": time.time(), "level": level, "title": title, "message": message[:500]})
@@ -150,10 +154,12 @@ class Engine:
 
     async def on_chat(self, payload):
         bot = self.store.profiles()["bot"]
-        if bot and payload.get("chatter_user_id") == bot["id"]:
+        if bot and payload.get("platform", "twitch") == "twitch" and (payload.get("chatter_user_id") == bot["id"] or payload.get("source_login") == bot.get("login", "").casefold()):
             return
         user_id = payload.get("chatter_user_id", "")
         name = payload.get("chatter_user_name", "Zuschauer")
+        platform = payload.get("platform", "twitch")
+        display_name = name if platform == "twitch" else f"{name} ({platform})"
         text = payload.get("message", {}).get("text", "")
         settings = self.store.settings()
         command = text.lower().strip()
@@ -177,7 +183,7 @@ class Engine:
         address = addressed_to_bot(payload, bot, settings.bot_name)
         if not address and conversation_followup(self.events, user_id, text):
             address = "chat_followup"
-        row = self.event("chat", name, text, subject_id=user_id, remember=self.store.viewer_memory_allowed(settings.channel, user_id), message_id=incoming_id, addressed_to_bot=bool(address), address_kind=address)
+        row = self.event("chat", display_name, text, subject_id=user_id, remember=payload.get("memory_identity_verified", True) and self.store.viewer_memory_allowed(settings.channel, user_id), message_id=incoming_id, source_message_id=payload.get("source_message_id", incoming_id), platform=platform, addressed_to_bot=bool(address), address_kind=address)
         previous = self.reply_target()
         combined = combine_request(previous, row)
         if combined:
@@ -211,7 +217,19 @@ class Engine:
         return bool(current and target and reply_key(current) == reply_key(target))
 
     async def check_channel(self):
-        channel = await self.twitch.channel()
+        settings = self.store.settings()
+        if settings.chat_source == "multichat" and settings.output_mode == "speech" and settings.input_mode != "twitch":
+            cached = self.store.get("channel_cache", {}).get(settings.channel, {})
+            owner = self.store.profiles()["owner"] or {}
+            owner_id = owner.get("id") if owner.get("login", "").casefold() == settings.channel else None
+            channel = {"id": cached.get("id") or owner_id or "local:" + settings.channel, "name": cached.get("name") or settings.channel, "login": settings.channel, "title": "Lokaler MultiChat-Betrieb", "category": "", "live": None, "profile_image_url": cached.get("profile_image_url", "")}
+        else:
+            channel = await self.twitch.channel()
+            if settings.chat_source == "multichat":
+                self.store.resolve_local_owner(settings.channel, channel["id"], channel["name"])
+            cache = self.store.get("channel_cache", {})
+            cache[settings.channel] = channel
+            self.store.put("channel_cache", cache)
         before = self.channel
         self.channel = channel
         self.channel_checked = time.time()
@@ -232,7 +250,12 @@ class Engine:
 
     def channel_ready(self, now=None):
         now = time.time() if now is None else now
+        if self.store.settings().chat_source == "multichat":
+            return bool(self.channel.get("id") and now - self.channel_checked <= 70 and self.multichat.connected)
         return bool(self.channel.get("id") and now - self.channel_checked <= 70 and (self.channel.get("live") or self.offline_test_active()))
+
+    def chat_connected(self):
+        return self.multichat.connected if self.store.settings().chat_source == "multichat" else self.twitch.connected
 
     async def start(self):
         async with self.lifecycle_lock:
@@ -245,7 +268,16 @@ class Engine:
         if not settings.channel:
             raise ValueError("Bitte zuerst einen Kanal einrichten.")
         await self.check_channel()
-        await self.twitch.token("bot")
+        if settings.output_mode == "text" or settings.chat_source == "twitch" or settings.input_mode == "twitch":
+            await self.twitch.token("bot")
+        if settings.output_mode == "speech":
+            voices = await self.speech.voices()
+            if not voices["engines"][settings.tts_engine]:
+                raise ValueError("Das ausgewaehlte Sprachsystem ist nicht verfuegbar.")
+            if settings.tts_voice and not any(v["engine"] == settings.tts_engine and v["id"] == settings.tts_voice and v["installed"] for v in voices["voices"]):
+                raise ValueError("Die ausgewaehlte Stimme fehlt. Bitte auswaehlen oder herunterladen.")
+            if settings.tts_engine == "piper" and not settings.tts_voice:
+                raise ValueError("Bitte zuerst eine Piper-Stimme auswaehlen.")
         if not settings.text_model:
             raise ValueError("Bitte zuerst ein KI-Modell einrichten.")
         if settings.stt_provider == "openai_realtime" and not (self.store.get("stt_key") or self.store.get("ai_key")):
@@ -277,12 +309,17 @@ class Engine:
                 if not self.channel.get("live"):
                     raise ValueError("Für den Twitch-Audioempfang muss der Kanal live sein.")
                 await self.audio.start_twitch()
-            self.tasks = [asyncio.create_task(self.twitch.chat(self.channel["id"], self.on_chat)), asyncio.create_task(self.monitor()), asyncio.create_task(self.conversation()), asyncio.create_task(self.memory_worker())]
+            chat = self.multichat.listen(self.on_chat) if settings.chat_source == "multichat" else self.twitch.chat(self.channel["id"], self.on_chat)
+            self.tasks = [asyncio.create_task(chat), asyncio.create_task(self.monitor()), asyncio.create_task(self.conversation()), asyncio.create_task(self.memory_worker())]
             self.begin_model_warmup()
         except BaseException:
             await self._stop()
             raise
         message = "Vorschläge erscheinen hier." if settings.mode == "preview" else "Automatische Beiträge sind eingeschaltet."
+        if settings.chat_source == "multichat":
+            message += " Lokaler MultiChat-Betrieb: kein Livestatus als Voraussetzung."
+        if settings.output_mode == "speech":
+            message += " Beitraege werden lokal vorgelesen und nicht in den Chat geschrieben."
         if self.offline_test_active():
             message += " Offline-Test: Lokales Audio wird verarbeitet; Beiträge können im echten Twitch-Chat erscheinen."
         await self.notify("success", "Begleiter gestartet", message)
@@ -317,6 +354,7 @@ class Engine:
 
     async def _stop(self):
         self.running = False
+        self.speech.stop()
         self.epoch += 1
         self.pending = None
         self.reply_requests.clear()
@@ -333,6 +371,7 @@ class Engine:
         self.model_warmup_task = None
         self.model_warmup_started = 0
         await self.audio.stop()
+        self.multichat.connected = False
         self.screenshot = None
         self.last_voice = 0
         await self.notify("info", "Begleiter gestoppt", "Audioverarbeitung und automatische Beiträge sind beendet.")
@@ -347,7 +386,7 @@ class Engine:
                         self.pending = None
                         self.screenshot = None
                 settings = self.store.settings()
-                if settings.screenshots_enabled and settings.screenshot_source == "obs" and self.channel.get("live") and not self.paused and time.time() - last_image_attempt > settings.screenshot_interval:
+                if settings.screenshots_enabled and settings.screenshot_source == "obs" and (self.channel.get("live") or settings.chat_source == "multichat") and not self.paused and time.time() - last_image_attempt > settings.screenshot_interval:
                     last_image_attempt = time.time()
                     self.screenshot = await obs_screenshot(settings.obs_url, self.store.get("obs_password", ""))
                     self.screenshot_time = time.time()
@@ -366,9 +405,9 @@ class Engine:
         if self.model_warming:
             return False, f"Lokales KI-Modell wird vorbereitet seit {round(now - self.model_warmup_started)} Sekunden."
         if not self.channel_ready(now):
-            return False, "Kein bestätigter aktueller Livestream."
-        if not self.twitch.connected:
-            return False, "Chat-Verbindung wird hergestellt."
+            return False, "Lokaler MultiChat-Eingang ist noch nicht bereit." if settings.chat_source == "multichat" else "Kein bestätigter aktueller Livestream."
+        if not self.chat_connected():
+            return False, "MultiChat-Verbindung wird hergestellt." if settings.chat_source == "multichat" else "Chat-Verbindung wird hergestellt."
         interval = min(settings.min_interval, DIRECT_REPLY_INTERVAL) if target else settings.min_interval
         if now - self.last_contribution < interval:
             return False, "Gesprächspause zwischen Beiträgen."
@@ -451,7 +490,7 @@ class Engine:
         memories.sort(key=lambda item: len(words.intersection(re.findall(r"\w{4,}", item["fact"].lower()))), reverse=True)
         if settings.provider == "local":
             memories = [{key: item[key] for key in ("id", "subject_id", "subject_name", "fact", "created", "source") if key in item} for item in memories[:3]]
-        return {"now": datetime.now(timezone.utc).isoformat(), "channel": {"name": self.channel.get("name"), "title": "Offline-Test mit lokalem Mikrofon" if self.offline_test_active() else self.channel.get("title"), "category": None if self.offline_test_active() else self.channel.get("category")}, "character": {"name": settings.bot_name, "account_login": bot.get("login", ""), "account_display_name": bot.get("display_name", ""), "personality": settings.personality}, "context": rows[-60:], "reply_to": target, "memories": memories[:12], "memory_subjects": list(eligible), "silence_seconds": round(max(0, now - self.last_voice)), "open_question": bool(self.last_question and self.last_owner_text <= self.last_question), "chat_included": not external or settings.cloud_chat_permission}
+        return {"now": datetime.now(timezone.utc).isoformat(), "channel": {"name": self.channel.get("name"), "title": "Offline-Test mit lokalem Mikrofon" if self.offline_test_active() else self.channel.get("title"), "category": None if self.offline_test_active() else self.channel.get("category")}, "character": {"name": settings.bot_name, "account_login": bot.get("login", ""), "account_display_name": bot.get("display_name", ""), "personality": settings.personality, "output_mode": settings.output_mode}, "context": rows[-60:], "reply_to": target, "memories": memories[:12], "memory_subjects": list(eligible), "silence_seconds": round(max(0, now - self.last_voice)), "open_question": bool(self.last_question and self.last_owner_text <= self.last_question), "chat_included": not external or settings.cloud_chat_permission}
 
     async def conversation(self):
         while self.running:
@@ -692,18 +731,26 @@ class Engine:
                 await self.check_channel()
                 if not self.can_contribute()[0] or self.epoch != epoch or self.draft_expired(draft) or draft["revision"] != self.revision or not self.pending or self.pending["id"] != draft_id or (target and not self.reply_still_valid(target)) or (not target and self.reply_target()) or (automatic and self.store.settings().mode != "automatic"):
                     raise ValueError("Der Versand wurde abgebrochen.")
-                reply_options = {"reply_parent_message_id": target["message_id"]} if target and target.get("message_id") else {}
-                message_id = await self.twitch.send(self.channel["id"], draft["text"], **reply_options)
+                if settings.output_mode == "speech":
+                    await self.speech.say(draft["text"], guard=lambda: self.can_contribute()[0] and self.epoch == epoch and self.revision == draft["revision"] and bool(self.pending and self.pending["id"] == draft_id) and not self.draft_expired(draft) and (self.reply_still_valid(target) if target else not self.reply_target()) and (not automatic or self.store.settings().mode == "automatic"))
+                    message_id = "tts:" + uuid.uuid4().hex
+                else:
+                    parent = target.get("source_message_id", target.get("message_id")) if target and target.get("platform", "twitch") == "twitch" else None
+                    reply_options = {"reply_parent_message_id": parent} if parent else {}
+                    message_id = await self.twitch.send(self.channel["id"], draft["text"], **reply_options)
                 self.finish_reply(target)
                 self.pending = None
                 now = time.time()
                 self.last_contribution = now
                 self.sent_times.append(now)
                 self.recent_sent.append(draft["text"])
-                self.event("bot", settings.bot_name, draft["text"], message_id=message_id, confirmed=True, reply_parent_message_id=target.get("message_id") if target else None, response_seconds=round(now - target["time"], 2) if target else None, reply_request_id=reply_key(target) if target else None, reply_request_ids=target.get("combined_reply_ids", [reply_key(target)]) if target else [], conversation_subject=target.get("subject_id", "") if target else self.channel.get("id", ""), conversation_question=draft["kind"] == "question")
+                self.event("bot", settings.bot_name, draft["text"], message_id=message_id, confirmed=True, delivery=settings.output_mode, reply_parent_message_id=target.get("message_id") if target else None, response_seconds=round(now - target["time"], 2) if target else None, reply_request_id=reply_key(target) if target else None, reply_request_ids=target.get("combined_reply_ids", [reply_key(target)]) if target else [], conversation_subject=target.get("subject_id", "") if target else self.channel.get("id", ""), conversation_question=draft["kind"] == "question")
                 if draft["kind"] == "question":
                     self.last_question = now
-                await self.notify("success", "Auf Twitch veröffentlicht", "Twitch hat den Versand bestätigt.")
+                if settings.output_mode == "speech":
+                    await self.notify("success", "Sprachausgabe abgeschlossen", "Die lokale Audiowiedergabe ist abgeschlossen. Es wurde keine Chatnachricht versendet.")
+                else:
+                    await self.notify("success", "Auf Twitch veröffentlicht", "Twitch hat den Versand bestätigt.")
         finally:
             self.outgoing.discard(task)
 
@@ -726,9 +773,11 @@ class Engine:
         label = "Prüft Erinnerungen" if self.analysis_kind == "memory" else "Schreibt Antwort" if progress.get("phase") == "writing" else "Verarbeitet Text und Bild" if progress.get("image") else "Verarbeitet Gesprächskontext" if progress.get("phase") == "context" else "Formuliert gerade"
         if analyzing and self.running and not self.paused:
             reason = f"KI {label[0].lower() + label[1:]} seit {round(phase_seconds)} Sekunden."
-        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.twitch.connected, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "analysis_label": label if analyzing else "", "analysis_phase": progress.get("phase", ""), "phase_seconds": phase_seconds, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
+        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.chat_connected(), "chat_source": settings.chat_source, "output_mode": settings.output_mode, "speech": {"status": self.speech.status, "speaking": self.speech.speaking}, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "analysis_label": label if analyzing else "", "analysis_phase": progress.get("phase", ""), "phase_seconds": phase_seconds, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
 
     async def close(self):
         await self.stop()
+        await self.speech.close()
         await self.twitch.close()
         await self.ai.close()
+        await self.multichat.close()

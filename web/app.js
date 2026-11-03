@@ -8,7 +8,7 @@ let access = new URLSearchParams(location.hash.slice(1)).get('access') || sessio
 if (location.hash.includes('access=')) history.replaceState(null, '', location.pathname);
 if (access) sessionStorage.setItem('companion-access', access);
 let state, currentView = 'home', deviceList = [], memoryList = [], feedSignature = '', draftSignature = '', oauthRole = null, refreshing = false, failures = 0;
-let toastTimeout;
+let toastTimeout, speechVoices = [], speechDevices = [];
 
 function toast(message, error = false) {
   $('#toast').textContent = message;
@@ -44,6 +44,7 @@ function setView(name) {
   $$('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === name));
   $('#page-label').textContent = labels[name];
   if (name === 'audio') loadDevices().catch(error => toast(error.message, true));
+  if (name === 'setup') loadSpeechOptions().catch(error => toast(error.message,true));
   if (name === 'memory') loadMemories().catch(error => toast(error.message, true));
   window.scrollTo({top:0,behavior:'instant'});
 }
@@ -67,6 +68,10 @@ function collectSettings() {
     device:row.querySelector('[data-field=device]').value === '' ? null : Number(row.querySelector('[data-field=device]').value),
     device_name:row.querySelector('[data-field=device]').selectedOptions[0]?.dataset.name || row.dataset.deviceName || ''
   }));
+  const output = $('#tts-device').selectedOptions[0];
+  settings.tts_device = output?.value ? Number(output.value) : null;
+  settings.tts_device_name = output?.dataset.name || '';
+  settings.tts_device_host = output?.dataset.host || '';
   return settings;
 }
 
@@ -97,6 +102,8 @@ function hydrate() {
   if (inputMode) inputMode.checked = true;
   renderSources(state.settings.sources);
   updateProviderFields();
+  updateIOFields();
+  renderSpeechOptions(false, true);
 }
 
 function updateProviderFields() {
@@ -123,9 +130,10 @@ function renderAccounts() {
       oauthRole = null; $('#modal').close(); toast(pending.message, true);
     }
   }
-  const complete = [Boolean(state.settings.twitch_client_id), Boolean(state.profiles.owner && state.profiles.bot), Boolean(state.settings.text_model), Boolean(state.settings.channel)];
-  $('#setup-progress').innerHTML = ['Twitch-App','Zwei Konten','KI-Verbindung','Dein Charakter'].map((name,index) => `<div class="progress-step ${complete[index] ? 'done' : ''}"><span>${complete[index] ? '✓' : index + 1}</span>${name}</div>`).join('');
+  const complete = [state.settings.output_mode === 'speech' || Boolean(state.settings.twitch_client_id), state.settings.chat_source === 'multichat' ? state.settings.output_mode === 'speech' || Boolean(state.profiles.bot) : Boolean(state.profiles.owner && state.profiles.bot), Boolean(state.settings.text_model), Boolean(state.settings.channel)];
+  $('#setup-progress').innerHTML = ['Verbindung','Konten / Eingang','KI-Verbindung','Dein Charakter'].map((name,index) => `<div class="progress-step ${complete[index] ? 'done' : ''}"><span>${complete[index] ? '✓' : index + 1}</span>${name}</div>`).join('');
   $('#onboarding-hint').hidden = complete.every(Boolean);
+  $('#account-owner').hidden = state.settings.chat_source === 'multichat';
   $('#owner-initial').textContent = (state.profiles.owner?.display_name || 'SC').slice(0,2).toUpperCase();
 }
 
@@ -134,13 +142,16 @@ function renderRuntime() {
   const channel = runtime.channel;
   $('#channel-name').textContent = runtime.demo ? 'Beispielstream' : channel.name || settings.channel || 'Dein Twitch-Kanal';
   $('#channel-title').textContent = runtime.demo ? 'Ein neuer Versuch mit dem Bogen · Beispielsituation' : channel.title || 'Die Verbindung beginnt in der Einrichtung.';
-  $('#channel-category').textContent = runtime.demo ? 'Gameplay · Demo' : runtime.offline_test ? 'Lokales Audio · Offline-Test' : channel.category || 'Kategorie wird automatisch erkannt';
+  $('#channel-category').textContent = runtime.demo ? 'Gameplay · Demo' : runtime.offline_test ? 'Lokales Audio · Offline-Test' : settings.chat_source === 'multichat' && channel.live == null ? 'MultiChat · Audio und Chat' : channel.category || 'Kategorie wird automatisch erkannt';
   $('#channel-avatar').innerHTML = !runtime.demo && channel.profile_image_url ? `<img src="${esc(channel.profile_image_url)}" alt="">` : '↗';
   const badge = $('#live-badge');
-  badge.textContent = runtime.demo ? 'Demo · keine Aufnahme' : channel.live ? 'LIVE' : channel.id ? runtime.offline_test ? 'Offline · Test aktiv' : 'Offline' : 'Noch nicht verbunden';
+  badge.textContent = !runtime.demo && settings.chat_source === 'multichat' ? 'MultiChat · lokal' : runtime.demo ? 'Demo · keine Aufnahme' : channel.live ? 'LIVE' : channel.id ? runtime.offline_test ? 'Offline · Test aktiv' : 'Offline' : 'Noch nicht verbunden';
   badge.className = 'badge ' + (runtime.demo ? 'demo' : channel.live ? 'live' : 'neutral');
   $$('.mode-switch button').forEach(el => el.classList.toggle('selected', el.dataset.mode === settings.mode));
   $('#mode-description').textContent = settings.mode === 'automatic' ? runtime.offline_test ? 'Offline-Test: Das Mikrofon wird verarbeitet. Automatische Beiträge erscheinen im echten Twitch-Chat.' : 'Passende Beiträge können automatisch im verbundenen Twitch-Kanal erscheinen.' : 'In der Vorschau entscheidest du, welche Beiträge veröffentlicht werden.';
+  $('#mode-description').textContent = settings.output_mode === 'speech' ? settings.mode === 'automatic' ? 'Passende Beiträge werden automatisch auf dem gewählten Audiogerät vorgelesen.' : 'Die Vorschau spielt erst nach deinem Klick auf Vorlesen.' : settings.chat_source === 'multichat' ? 'MultiChat liefert den Gesprächskontext. Textbeiträge erscheinen im angegebenen Twitch-Kanal, auch offline.' : $('#mode-description').textContent;
+  $('#draft-actions [data-action=send]').innerHTML = (settings.output_mode === 'speech' ? 'Vorlesen ' : 'Veröffentlichen ') + icon('arrow');
+  if (runtime.speech?.status && runtime.speech.status !== 'Bereit') $('#character-state').textContent = runtime.speech.status;
   $('#run-button').classList.toggle('stop', runtime.running);
   $('#run-button').innerHTML = icon(runtime.running ? 'stop' : 'play') + (runtime.running ? 'Begleiter stoppen' : 'Begleiter starten');
   const lastModelResult = (runtime.logs || []).find(log => ['Lokales Modell nicht bereit', 'Lokales Modell bereit'].includes(log.title));
@@ -151,6 +162,7 @@ function renderRuntime() {
   $('#character-name').textContent = settings.bot_name;
   $('#character-description').textContent = settings.personality.length > 180 ? settings.personality.slice(0,177) + '…' : settings.personality;
   $('#character-state').textContent = runtime.demo ? 'Eine Beispielsituation zum Kennenlernen.' : runtime.paused ? modelFailure ? 'KI-Modell konnte nicht geladen werden.' : 'Macht gerade Pause.' : runtime.running && runtime.analyzing ? `${runtime.analysis_label || (runtime.analysis_kind === 'memory' ? 'Prüft Erinnerungen' : 'Formuliert gerade')} · ${Math.round(runtime.phase_seconds ?? runtime.analysis_seconds)} Sekunden` : runtime.running ? 'Hört zu und behält den Kontext.' : 'Bereit, wenn du es bist.';
+  if (runtime.speech?.status && runtime.speech.status !== 'Bereit') $('#character-state').textContent = runtime.speech.status;
   $('#runtime-reason').textContent = runtime.demo ? 'Diese Demo sendet keine Nachrichten an Twitch.' : modelFailure ? `${modelFailure} Modell: ${settings.text_model}. Modellliste und lokalen Modellordner prüfen.` : runtime.reason;
   $('#stat-sent').textContent = runtime.sent_hour;
   $('#stat-limit').textContent = 'von höchstens ' + settings.max_per_hour;
@@ -251,6 +263,10 @@ async function action(name, element) {
   if (!state && name !== 'close-modal') return;
   switch(name) {
     case 'save': await save(); break;
+    case 'speech-options': await loadSpeechOptions(); toast('Stimmen und Wiedergabegeräte geladen.'); break;
+    case 'install-voice': toast('Stimme wird heruntergeladen …'); await post('tts/install',{voice:$('#tts-voice').value}); await loadSpeechOptions(); toast('Stimme ist bereit.'); break;
+    case 'test-speech': await save(true); toast('Stimmtest läuft auf dem ausgewählten Gerät.'); await post('tts/test'); toast('Stimmtest abgeschlossen.'); break;
+    case 'stop-speech': await post('tts/stop'); toast('Sprachausgabe abgebrochen.'); break;
     case 'devices': await loadDevices(); toast('Geräteliste aktualisiert.'); break;
     case 'add-source': {
       const sources = collectSettings().sources;
@@ -274,7 +290,7 @@ async function action(name, element) {
       await refresh(); break;
     case 'pause': await post('run/pause'); await refresh(); break;
     case 'analyze': await post('run/analyze'); await refresh(); break;
-    case 'send': if (state.runtime.pending) {await post('draft/send',{id:state.runtime.pending.id}); await refresh(); toast('Twitch hat die Veröffentlichung bestätigt.');} break;
+    case 'send': if (state.runtime.pending) {await post('draft/send',{id:state.runtime.pending.id}); await refresh(); toast(state.settings.output_mode === 'speech' ? 'Sprachausgabe abgeschlossen.' : 'Twitch hat die Veröffentlichung bestätigt.');} break;
     case 'discard': if (state.runtime.pending) {await post('draft/discard',{id:state.runtime.pending.id}); await refresh();} break;
     case 'demo':
       if (state.runtime.running) { showModal('<h2>Beispielsituation öffnen?</h2><p>Der aktive Durchgang wird gestoppt. Die Demo verwendet ausschließlich Beispieldaten und sendet nichts an Twitch.</p><button class="primary" data-action="confirm-demo">Durchgang stoppen und Demo öffnen</button>'); break; }
@@ -311,7 +327,7 @@ document.addEventListener('click', async event => {
   if (viewButton) { event.preventDefault(); setView(viewButton.dataset.view); return; }
   const mode = event.target.closest('[data-mode]');
   if (mode && state) {
-    if (mode.dataset.mode === 'automatic' && state.settings.mode !== 'automatic') showModal('<h2>Automatisch mitreden?</h2><p>Der Begleiter darf passende Beiträge mit dem verbundenen Bot-Account selbst auf Twitch veröffentlichen. Abstände, Stundenlimit und Live-Status werden weiterhin geprüft.</p><div class="button-group"><button class="primary" data-action="automatic-mode">Automatische Beiträge einschalten</button><button class="button" data-action="close-modal">In der Vorschau bleiben</button></div>');
+    if (mode.dataset.mode === 'automatic' && state.settings.mode !== 'automatic') showModal('<h2>Automatisch mitreden?</h2><p>Der Begleiter darf passende Beiträge automatisch über den gewählten Ausgabeweg schreiben oder vorlesen. Abstände und Stundenlimit gelten weiterhin. Im MultiChat-Betrieb ist kein Livestream erforderlich.</p><div class="button-group"><button class="primary" data-action="automatic-mode">Automatische Beiträge einschalten</button><button class="button" data-action="close-modal">In der Vorschau bleiben</button></div>');
     else if (mode.dataset.mode !== state.settings.mode) {try {await post('run/mode',{mode:mode.dataset.mode}); await refresh();} catch(error) {toast(error.message,true);}}
     return;
   }
@@ -325,8 +341,40 @@ document.addEventListener('click', async event => {
 
 $('#provider').addEventListener('change', () => { updateProviderFields(); if ($('#provider').value === 'openai' && !$('#text-model').value) $('#text-model').value = 'gpt-4.1-mini'; });
 $('#stt-provider').addEventListener('change',updateProviderFields);
+$('#chat-source').addEventListener('change',updateIOFields);
+$('#output-mode').addEventListener('change',()=>{updateIOFields(); loadSpeechOptions().catch(error=>toast(error.message,true));});
+$('#tts-engine').addEventListener('change',()=>{renderSpeechOptions(true);updateIOFields();});
 $('#memory-search').addEventListener('input',renderMemories);
 $('#unlock-form').addEventListener('submit', async event => {event.preventDefault(); access = $('#access').value.trim(); sessionStorage.setItem('companion-access',access); try {await refresh(true); $('#access').value = ''; $('#unlock-error').textContent = '';} catch(error) {$('#unlock-error').textContent = error.message;}});
 $('#image-upload').addEventListener('change', async event => {const file = event.target.files[0]; if (!file) return; const form = new FormData(); form.append('file',file); try {showImage(await api('screenshot/upload',{method:'POST',body:form})); toast('Testbild übernommen.');} catch(error) {toast(error.message,true);} finally {event.target.value = '';}});
 if (access) refresh(true).catch(error => {$('#unlock').hidden = false; $('#unlock-error').textContent = error.message;}); else $('#unlock').hidden = false;
 setInterval(() => {if (access && !$('#app').hidden) refresh();},2000);
+
+function updateIOFields() {
+  const multi = $('#chat-source').value === 'multichat';
+  $('#multichat-fields').hidden = !multi;
+  $('#account-owner').hidden = multi;
+  $('#speech-fields').hidden = $('#output-mode').value !== 'speech';
+  $('#install-voice-button').hidden = $('#tts-engine').value !== 'piper';
+}
+async function loadSpeechOptions() {
+  const [voices, devices] = await Promise.all([api('tts/voices'), api('tts/devices')]);
+  speechVoices = voices.voices; speechDevices = devices.devices;
+  renderSpeechOptions();
+}
+function renderSpeechOptions(changedEngine = false, hydrate = false) {
+  const engine = $('#tts-engine').value || state.settings.tts_engine;
+  const selected = changedEngine ? '' : hydrate ? state.settings.tts_voice : $('#tts-voice').value;
+  const voices = speechVoices.filter(v => v.engine === engine);
+  $('#tts-voice').innerHTML = (engine === 'windows' ? '<option value="">Windows-Standardstimme</option>' : '') + voices.map(v => `<option value="${esc(v.id)}">${esc(v.name)}${v.installed ? '' : ' · Download nötig'}</option>`).join('');
+  if (selected && !voices.some(v=>v.id === selected)) $('#tts-voice').insertAdjacentHTML('beforeend',`<option value="${esc(selected)}">${esc(selected)} · Liste laden / nicht verfügbar</option>`);
+  if (selected) $('#tts-voice').value = selected;
+  const previous = hydrate ? String(state.settings.tts_device ?? '') : $('#tts-device').value;
+  $('#tts-device').innerHTML = '<option value="">System-Standardausgabe</option>' + speechDevices.map(d=>`<option value="${d.index}" data-name="${esc(d.name)}" data-host="${esc(d.host)}">${esc(d.name)} · ${esc(d.host)}</option>`).join('');
+  if (speechDevices.some(d=>String(d.index) === previous)) $('#tts-device').value = previous;
+  else if (previous && state.settings.tts_device_name) {
+    const match=speechDevices.find(d=>d.name === state.settings.tts_device_name && (!state.settings.tts_device_host || d.host === state.settings.tts_device_host));
+    if(match) $('#tts-device').value=String(match.index);
+    else { $('#tts-device').insertAdjacentHTML('beforeend',`<option value="${esc(previous)}" data-name="${esc(state.settings.tts_device_name)}" data-host="${esc(state.settings.tts_device_host)}">${esc(state.settings.tts_device_name)} · Liste laden / nicht verfügbar</option>`); $('#tts-device').value=previous; }
+  }
+}

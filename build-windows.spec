@@ -6,9 +6,9 @@ hidden = collect_submodules('streamlink.plugins') + collect_submodules('streamli
 hidden += ['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
            'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'sounddevice',
            '_sounddevice_data', 'numpy', 'PIL.Image', 'mss', 'streamlink']
-hidden += ['sherpa_onnx']
+hidden += ['sherpa_onnx', 'piper', 'piper.espeakbridge', 'companion.tts_worker']
 sherpa_root = Path(get_package_paths('sherpa_onnx')[1])
-speech_binaries = collect_dynamic_libs('sherpa_onnx')
+speech_binaries = collect_dynamic_libs('sherpa_onnx') + collect_dynamic_libs('piper')
 # Both recognition backends use ONNX. Put the newer compatible runtime at the
 # common dependency location as well, so import order cannot pick an older DLL.
 if (sherpa_root / 'lib' / 'onnxruntime.dll').exists():
@@ -17,7 +17,7 @@ a = Analysis(
     [str(root / 'desktop.py')],
     pathex=[str(root)],
     binaries=speech_binaries,
-    datas=[(str(root / 'web'), 'web')] + collect_data_files('streamlink') + collect_data_files('_sounddevice_data') + collect_data_files('faster_whisper') + copy_metadata('sherpa-onnx') + copy_metadata('sherpa-onnx-core'),
+    datas=[(str(root / 'web'), 'web'), (str(root / 'companion' / 'windows_speech.ps1'), 'companion')] + collect_data_files('streamlink') + collect_data_files('_sounddevice_data') + collect_data_files('faster_whisper') + copy_metadata('sherpa-onnx') + copy_metadata('sherpa-onnx-core') + collect_data_files('piper') + copy_metadata('piper-tts'),
     hiddenimports=hidden,
     excludes=['tkinter', 'matplotlib', 'scipy', 'pandas', 'torch', 'tensorflow', 'pytest', 'IPython', 'jupyter'],
     noarchive=False,

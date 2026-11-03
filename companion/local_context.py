@@ -9,7 +9,7 @@ def compact_context(context, *, direct=False, memory_only=False):
         return context
     target = context.get("reply_to") if direct else None
     character = context.get("character", {})
-    result = {"character": {key: character[key] for key in ("name", "account_login", "personality") if character.get(key)}}
+    result = {"character": {key: character[key] for key in ("name", "account_login", "personality", "output_mode") if character.get(key)}}
     display = character.get("account_display_name", "")
     if display and display.casefold() != character.get("account_login", "").casefold():
         result["character"]["account_display_name"] = display
@@ -36,7 +36,7 @@ def compact_context(context, *, direct=False, memory_only=False):
         if limit <= 0 or len(rows) >= (6 if direct else 8):
             break
         text = event.get("canonical_text", event.get("text", ""))[:limit]
-        row = {"name": event.get("speaker_name", event.get("name", "")), "source": event.get("role") or event.get("kind", ""), "text": text}
+        row = {"name": event.get("speaker_name", event.get("name", "")), "source": ("chat · " + event["platform"]) if event.get("kind") == "chat" and event.get("platform") not in (None, "twitch") else event.get("role") or event.get("kind", ""), "text": text}
         if event.get("provisional"):
             row["provisional"] = True
         if not direct and event.get("remember") and event.get("subject_id") in allowed:
@@ -45,7 +45,7 @@ def compact_context(context, *, direct=False, memory_only=False):
         remaining -= len(text)
     result["context"] = list(reversed(rows))
     if target:
-        result["reply_to"] = {"name": target.get("speaker_name", target.get("name", "")), "source": target.get("role") or target.get("kind", "chat"), "text": target.get("canonical_text", target["text"])}
+        result["reply_to"] = {"name": target.get("speaker_name", target.get("name", "")), "source": ("chat · " + target["platform"]) if target.get("kind") == "chat" and target.get("platform") not in (None, "twitch") else target.get("role") or target.get("kind", "chat"), "text": target.get("canonical_text", target["text"])}
         if target.get("kind") == "audio":
             result["reply_to"]["addressed_to_character"] = character.get("name", "")
     memories = []
@@ -82,6 +82,8 @@ def dialogue_messages(context, instruction):
     if character.get("personality"):
         system += "\nDein Gesprächsstil: " + character["personality"]
     system += f"\nHöchstens {context.get('max_characters', 340)} Zeichen für den veröffentlichten Chattext."
+    if character.get("output_mode") == "speech":
+        system += "\nDein Beitrag wird vorgelesen. Schreibe gut sprechbares Deutsch, ohne Emote-Codes, Emojis, Markdown oder Regieanweisungen. Keine Ausgabe im Twitch-Chat behaupten."
     profile = system
     channel = context.get("channel", {})
     if channel:

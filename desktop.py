@@ -5,6 +5,11 @@ from pathlib import Path
 
 
 def main():
+    if "--tts-worker" in sys.argv:
+        sys.argv.remove("--tts-worker")
+        from companion.tts_worker import main as worker
+        worker()
+        return
     if "--streamlink-worker" in sys.argv:
         sys.argv.remove("--streamlink-worker")
         # CLI plugins are imported dynamically, so the build collects them explicitly.
@@ -37,7 +42,7 @@ def main():
 
 if __name__ == "__main__":
     # GUI executables have no console stream. A log is useful for startup failures.
-    if getattr(sys,"frozen",False) and "--streamlink-worker" not in sys.argv:
+    if getattr(sys,"frozen",False) and "--streamlink-worker" not in sys.argv and "--tts-worker" not in sys.argv:
         root = Path(sys.executable).resolve().parent
         folder = root / ("sender-data" if "--sender" in sys.argv else "data")
         folder.mkdir(exist_ok=True)

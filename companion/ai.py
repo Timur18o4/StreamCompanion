@@ -200,7 +200,7 @@ class AI:
         schema = MEMORY_SCHEMA if memory_only else REPLY_SCHEMA if direct else DECISION_SCHEMA
         messages = dialogue_messages(model_context, instruction) if plain else [{"role": "system", "content": instruction}, {"role": "user", "content": user}]
         if memory_only:
-            profile = {"character": context.get("character") or {"name": settings.bot_name, "account_login": (self.store.profiles()["bot"] or {}).get("login", ""), "personality": settings.personality}, "max_characters": settings.max_message_length}
+            profile = {"character": context.get("character") or {"name": settings.bot_name, "account_login": (self.store.profiles()["bot"] or {}).get("login", ""), "personality": settings.personality, "output_mode": settings.output_mode}, "max_characters": settings.max_message_length}
             messages = [dialogue_messages(profile, LOCAL_REPLY_SYSTEM)[0], {"role": "system", "content": "Für diese Anfrage gilt ausschließlich die folgende Gedächtnisaufgabe; erzeuge keinen Chatbeitrag und keine Emotes.\n" + LOCAL_MEMORY_SYSTEM}, {"role": "user", "content": user}]
         if plain and not direct:
             messages.insert(1, {"role": "system", "content": "Du bist gerade nicht direkt angesprochen. Greife einen konkreten aktuellen Anlass auf, ohne Standardfrage oder Gesprächsfloskel. Eine Sprechpause darf ein Anlass sein, an ein noch aktuelles Thema anzuknüpfen; Ruhe allein ist kein Grund zu schweigen. Keine Werbung, Moderation oder Aufforderungen an Lurker. Bei einer offenen Frage keine neue Frage beginnen. Fehlt ein belegter passender Gesprächsanlass oder ist der Kontext unklar, gib exakt __STILL__ aus."})

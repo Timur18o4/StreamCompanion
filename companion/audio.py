@@ -83,6 +83,8 @@ class Audio:
         return {source: {"level": round(state.level, 3) if time.time() - state.last_packet < 2 else 0, "last_packet": state.last_packet, "status": state.status, "bytes": state.bytes, "dropped": state.dropped, "partial_text": state.partial_text, "lag_seconds": round(state.queued_bytes / 48000, 2) if state.streaming else None} for source, state in self.states.items()}
 
     def feed(self, source_id, pcm):
+        if getattr(self.engine, "speech", None) and self.engine.speech.microphone_muted():
+            return
         settings = self.engine.store.settings()
         source = next((item for item in settings.sources if item.id == source_id and item.enabled and item.role != "ignore"), None)
         if not self.engine.running or self.engine.paused or not self.engine.channel_ready() or not source or not pcm or len(pcm) % 2:

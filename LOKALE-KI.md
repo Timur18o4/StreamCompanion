@@ -1,4 +1,4 @@
-# Lokale KI mit Version 0.2.4
+# Lokale KI mit Version 0.3.0
 
 Textmodell und Spracherkennung sind zwei getrennte Komponenten. Im Windows-Paket sind deren Python-Bibliotheken enthalten, aber weder Ollama noch Modellgewichte. Der erste Start enthält keine Twitch-Konten, API-Schlüssel oder persönlichen Erinnerungen.
 
@@ -36,3 +36,7 @@ Namensvarianten wie eine wiederholt falsch erkannte Schreibweise des Charakterna
 - Text und Sprache bleiben nur bei entsprechend gewählten lokalen Anbietern lokal. Twitch benötigt weiterhin Internet.
 
 Die Messergebnisse stehen in [VALIDIERUNG.md](VALIDIERUNG.md). Eine gleichwertige Qualität oder Reaktionszeit gegenüber OpenAI ist nicht nachgewiesen.
+
+## Lokale Sprachausgabe
+
+Windows-Stimmen sind ohne zusätzliches Sprachmodell verfügbar. Piper benötigt beim Quellstart zusätzlich `requirements-tts.txt`; das Windows-Paket enthält die Laufzeit bereits. Stimmgewichte werden in der Oberfläche separat heruntergeladen. Stimme und Wiedergabegerät unter Einrichtung auswählen; OBS muss dieses Gerät selbst erfassen. Die Vorschau spricht erst nach dem Klick auf Vorlesen. Ein Ausgabewechsel beim Speichern stoppt den Begleiter; danach erneut starten.

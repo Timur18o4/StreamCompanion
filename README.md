@@ -1,4 +1,4 @@
-# Stream Companion · Version 0.2.4
+# Stream Companion · Version 0.3.0
 
 Ein Gesprächsbegleiter für einen eigenen Twitch-Kanal. Er verarbeitet laufend Audio, berücksichtigt Chat und Kategorie und erzeugt kurze Kommentare oder Fragen. Ein eigener Bot-Account schreibt in den Chat. Die Oberfläche läuft lokal auf einem Windows-PC oder auf einem Raspberry/Linux-Rechner und lässt sich im Browser bedienen.
 
@@ -8,11 +8,32 @@ Neu in Version 0.2.4: optional automatische Zuschauer-Erinnerungen ohne vorherig
 
 Die bisherigen Gesprächsfunktionen bleiben enthalten: bestätigte Frage-Antwort-Verläufe bleiben im Kontext, Rückfragen desselben Chatteilnehmers können ohne erneute Erwähnung beantwortet werden, und kurze Nachträge ergänzen eine laufende Anfrage. Direkte Antworten und spontane Kommentare verwenden normale Dialogrollen und freien Chattext; Antwortlänge und CPU-Threads lassen sich einstellen. Fortlaufende lokale Spracherkennung mit Nemotron ist enthalten. Fragen und hypothetische Aussagen gelten nicht als Gedächtnisbelege. Ein identischer Qualitätsstand gegenüber einem Cloudmodell ist damit nicht nachgewiesen.
 
-[Downloads für v0.2.4](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.2.4) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+[Downloads für v0.3.0](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.3.0) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+
+## Neu in Version 0.3.0: MultiChat und Sprachausgabe
+
+Unter **Einrichtung → Chat-Eingang und Bot** kann statt des direkten Twitch-Eingangs der lokale MultiChat-Ereignisstrom ausgewählt werden. Standardadresse: `http://localhost:8765/events`. Es werden neue Chatnachrichten von Twitch, YouTube, Kick, TikTok und CNG verarbeitet; System-, Status- und Alert-Ereignisse werden ignoriert. Unterbrechungen werden automatisch neu verbunden. Die eingehenden Texte bleiben Daten und erteilen dem Begleiter keine zusätzlichen Rechte.
+
+MultiChat benötigt keine Anmeldung des Kanalbesitzers in Companion. Für Textausgabe verwendet Companion ausschließlich den angemeldeten Twitch-Bot; die Kanalmetadaten werden ebenfalls mit dessen Zugang gelesen. Die Textausgabe geht weiterhin an den eingestellten Twitch-Kanal, auch wenn der Anlass von einer anderen Plattform stammt. Fremde Plattform-Nachrichten werden nicht als Twitch-Antwort-ID verwendet. Bestehende Kanalbesitzer-Anmeldungen bleiben gespeichert, werden in diesem Modus aber nicht benötigt. Der direkte Twitch-Eingang bleibt als Alternative erhalten.
+
+Im MultiChat-Betrieb muss kein Livestream bestätigt sein. Lokales Audio, Chat und gegebenenfalls aktivierter OBS-Bildkontext können auch offline verarbeitet werden. Der Begleiter beginnt erst nach seinem Start; automatischer Modus kann echte Beiträge schreiben oder sprechen. Stundenlimit, Abstände, Vorschau, Pause und Stop gelten weiterhin.
+
+Unter **Antworten schreiben oder sprechen** sind zwei Ausgabewege wählbar:
+
+- **Text im Twitch-Chat:** bisheriger Versand über den Bot.
+- **Lokal sprechen:** spielt den fertigen Beitrag auf dem ausgewählten Wiedergabegerät ab; es wird keine zusätzliche Chatnachricht geschrieben. Bei MultiChat-Eingang und lokalem Audio ist dafür weder eine Kanalbesitzer- noch eine Bot-Anmeldung erforderlich. Ohne Twitch-Zugang werden keine aktuellen Twitch-Kategorie- oder Livestatusdaten behauptet.
+
+Beim Speichern eines Wechsels zwischen Text und Sprache sowie Änderungen an Stimme oder Wiedergabegerät wird der laufende Begleiter gestoppt; die Anwendung bleibt geöffnet. Anschließend „Begleiter starten“ wählen. Die Vorschau erzeugt keinen Ton, bevor „Vorlesen“ gewählt wird. Der separate Stimmtest ist nur bei gestopptem Begleiter verfügbar und spielt hörbar auf dem gewählten Gerät. Wiedergabegeräte werden nach Namen und Audiosystem wiedergefunden; fehlt das Gerät, wird kein anderes Gerät ungefragt verwendet. Während der Sprachausgabe und für einen kurzen Nachlauf wird Audioeingang verworfen, um Rückkopplungen mit der eigenen Stimme zu verhindern. Pause und Stop brechen laufende Sprachausgabe ab.
+
+**Sprachsysteme:** Unter Windows stehen die auf dem Rechner installierten Windows-Stimmen zur Auswahl. Piper ergänzt lokale neuronale Stimmen; Thorsten (Deutsch), Eva (Deutsch) und Lessac (Englisch) können über die Oberfläche heruntergeladen werden. Stimme, Lautstärke und Sprechtempo sind einstellbar. Die Piper-Stimme bleibt für weitere Beiträge geladen; nach fünf Minuten ohne Auftrag endet der Sprachprozess. Er nutzt zwei CPU-Threads und keine GPU. [Piper-Projekt und Lizenz](https://github.com/OHF-Voice/piper1-gpl) · [Stimmen und Modellkarten](https://huggingface.co/rhasspy/piper-voices).
+
+Für einen Quellstart mit Piper zusätzlich `python -m pip install -r requirements-tts.txt` ausführen. Die Windows-Testinstallation enthält die Laufzeit, aber Stimmgewichte werden separat lokal unter `data/tts-models` abgelegt. Die Stimmen haben eigene Modellkarten und Lizenzangaben. Piper-Lizenztext und Quellenhinweise stehen unter `third-party-licenses` und in `DRITTANBIETER-TTS.md`.
+
+Persönliche MultiChat-Erinnerungen benötigen eine stabile Nutzer-ID aus der Bridge. Twitch-IDs bleiben mit vorhandenen Notizen kompatibel; andere Plattformen erhalten getrennte Kennungen. Gleiche Anzeigenamen auf verschiedenen Plattformen werden nicht zusammengeführt. Fehlt die Nutzer-ID, ist die Nachricht für das aktuelle Gespräch nutzbar, aber keine dauerhafte persönliche Erinnerung. Die bestehenden Befehle `!remember off`, `!forget` und `!remember on` gelten pro Person und Plattform.
 
 ## Windows: portables Paket
 
-Im separaten Paket **StreamCompanion-Windows-v0.2.4.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
+Im separaten Paket **StreamCompanion-Windows-v0.3.0.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
 
 Die folgenden Installationsbefehle und die `.venv`-Anweisungen beziehen sich auf das **Quellpaket**. Im portablen Paket werden keine zusätzlichen Python-Pakete über `Start.cmd` installiert.
 

@@ -1,10 +1,12 @@
-STREAM COMPANION 0.2.4 - QUELLPAKET
+STREAM COMPANION 0.3.0 - QUELLPAKET
 
 WINDOWS
 1. Python 3.11+ (64 Bit) muss als "python" installiert sein.
 2. Start.cmd doppelklicken. Beim ersten Start werden Pakete installiert.
 3. In der Oberfläche zuerst "Demo ansehen" oder "Einrichtung" öffnen.
-4. Twitch-App-ID hinterlegen; Kanalbesitzer und Bot separat anmelden.
+4. Chat-Eingang waehlen: MultiChat braucht keinen Kanalbesitzer-Login.
+   Fuer Twitch-Textausgabe App-ID und Bot anmelden; direkter Twitch-Eingang
+   benoetigt weiterhin Kanalbesitzer und Bot.
 5. KI und Audioquelle einrichten. Mit "Vorschau" beginnen.
 
 RASPBERRY / LINUX
@@ -25,3 +27,8 @@ Lokale fortlaufende Spracherkennung: siehe LOKALE-KI.md.
 Pause unterbricht auch Audio; Weiter zuhoeren setzt den Begleiter fort.
 Für Einrichtung, Datenablage und bekannte Grenzen README.md lesen.
 Prüfstand: VALIDIERUNG.md.
+
+AUSGABE
+Unter Einrichtung Text oder lokale Sprache, Stimme und Wiedergabegeraet waehlen.
+Piper-Stimmen separat herunterladen. Stimmtest nur bei gestopptem Begleiter.
+Beim Speichern eines Ausgabewechsels stoppt der Begleiter; danach erneut starten.

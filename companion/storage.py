@@ -110,6 +110,15 @@ class Store:
         self.db.execute("DELETE FROM memories WHERE id=? AND channel=?", (memory_id, channel))
         self.db.commit()
 
+    def resolve_local_owner(self, channel: str, subject: str, name: str):
+        """Keep speech-only notes when a Twitch bot later resolves the channel ID."""
+        previous = "local:" + channel
+        if subject == previous:
+            return
+        self.db.execute("DELETE FROM memories WHERE channel=? AND subject_id=? AND fact IN (SELECT fact FROM memories WHERE channel=? AND subject_id=?)", (channel, previous, channel, subject))
+        self.db.execute("UPDATE memories SET subject_id=?,subject_name=? WHERE channel=? AND subject_id=?", (subject, name, channel, previous))
+        self.db.commit()
+
     def forget_channel(self, channel: str):
         self.db.execute("DELETE FROM memories WHERE channel=?", (channel,))
         # Clearing notes must never silently re-enable a viewer who opted out.

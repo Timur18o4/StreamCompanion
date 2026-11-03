@@ -138,15 +138,17 @@ class Twitch:
 
     async def channel(self):
         settings = self.store.settings()
-        users = await self.request("GET", "users", params={"login": settings.channel})
+        multichat = settings.chat_source == "multichat"
+        role = "bot" if multichat else "owner"
+        users = await self.request("GET", "users", role=role, params={"login": settings.channel})
         if not users.get("data"):
             raise TwitchError("Der Twitch-Kanal wurde nicht gefunden.")
         profile = users["data"][0]
         owner = self.store.profiles()["owner"]
-        if not owner or owner["id"] != profile["id"]:
+        if not multichat and (not owner or owner["id"] != profile["id"]):
             raise TwitchError("Bitte den Besitzer des ausgewählten Kanals anmelden.")
-        info = await self.request("GET", "channels", params={"broadcaster_id": profile["id"]})
-        live = await self.request("GET", "streams", params={"user_id": profile["id"]})
+        info = await self.request("GET", "channels", role=role, params={"broadcaster_id": profile["id"]})
+        live = await self.request("GET", "streams", role=role, params={"user_id": profile["id"]})
         meta = info["data"][0] if info.get("data") else {}
         return {"id": profile["id"], "name": profile["display_name"], "login": profile["login"], "title": meta.get("title", ""), "category": meta.get("game_name", ""), "live": bool(live.get("data")), "profile_image_url": profile.get("profile_image_url", "")}
 

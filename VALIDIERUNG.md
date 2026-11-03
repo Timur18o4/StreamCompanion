@@ -1,3 +1,17 @@
+# Validierung von Version 0.3.0
+
+Stand: 3. November 2026. 224 automatisierte Tests bestanden (661,89 Sekunden, zwei Hinweise aus Testbibliotheken). Nach der abschließenden Korrektur für Twitch-Zeitstempel als Millisekunden-Text bestanden 19 MultiChat-Prüfungen. JavaScript-Syntax und Git-Diff wurden geprüft.
+
+Die isolierten Prüfungen decken SSE-Verarbeitung, Ereignisfilter, Duplikate, Plattformtrennung, Bot-Echo, MultiChat-Sprachbetrieb ohne Twitch-Anmeldung, native Twitch-Antwort-IDs, Wiedergaberouting, Abbruch, Schutz vor eigenem Audio und ausbleibenden Chatversand bei TTS-Fehlern ab. Der echte MultiChat-Endpunkt blieb im 35-Sekunden-Lesetest verbunden; in diesem Zeitraum wurden keine neuen Chatnachrichten beobachtet.
+
+Windows und zwei Piper-Stimmen erzeugten echte WAV-Dateien. Auch der Piper-Prozess aus der gebauten Windows-EXE funktionierte. Dort dauerte die erste Probe 15,56 Sekunden und die zweite mit geladenem Modell 0,86 Sekunden bei rund vier Sekunden Audio. Das sind einzelne Messungen, keine garantierten Zeiten unter Streamlast. Es wurden keine Test-Audiodateien abgespielt und keine künstlichen Testnachrichten an Twitch gesendet. Die hörbare Ausgabe auf dem persönlichen Wiedergabegerät ist damit nicht bestätigt.
+
+Die installierte Anwendung meldete 0.3.0, war mit MultiChat verbunden und empfing beide Audioquellen ohne Rückstau oder verworfene Pakete. Neun bestehende Erinnerungen blieben erhalten. Stimmen und 63 Wiedergabegeräte waren per API verfügbar; die neuen Bedienelemente wurden ausgeliefert. Die visuelle Firefox-Prüfung wurde von der Computersteuerung wegen fehlender URL-Regelunterstützung blockiert; eine visuelle Abnahme wird nicht behauptet.
+
+Beim Ausgabewechsel stoppt der Begleiter absichtlich; die Anwendung bleibt geöffnet. Die Aktivitätsmeldungen bestätigten diesen Ablauf. Ein automatischer Wiederanlauf nach dem Speichern ist nicht Bestandteil dieser Version.
+
+## Vorherige Prüfungen von Version 0.2.4
+
 # Validierung von Version 0.2.4
 
 Stand: 3. November 2026. 195 automatisierte Tests bestanden (447,64 Sekunden, zwei Hinweise aus Testbibliotheken). Die sieben neuen Gedächtnisprüfungen wurden nach der abschließenden Änderung zur Beibehaltung von Speichersperren erneut erfolgreich ausgeführt. Zehn zusätzliche Starthelfer-Prüfungen unter Windows PowerShell 5.1 bestanden. JavaScript-Syntax und Git-Diff wurden geprüft.
