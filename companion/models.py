@@ -45,6 +45,7 @@ class Settings(BaseModel):
     max_message_length: int = Field(default=340, ge=40, le=450)
     owner_memory: bool = True
     viewer_memory: bool = False
+    viewer_memory_mode: Literal["opt_in", "automatic"] = "opt_in"
     cloud_chat_permission: bool = False
     screenshots_enabled: bool = False
     screenshot_source: Literal["obs", "companion", "manual"] = "obs"

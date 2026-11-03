@@ -104,7 +104,7 @@ def create_app(data_dir: Path | None = None):
     async def save_settings(payload: SettingsInput):
         old = store.settings()
         changed_identity = old.twitch_client_id != payload.settings.twitch_client_id
-        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "cloud_chat_permission")
+        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "viewer_memory_mode", "cloud_chat_permission")
         secrets_changed = any(getattr(payload, name) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")) or bool(payload.clear_secrets)
         if engine.running and (secrets_changed or any(getattr(old, key) != getattr(payload.settings, key) for key in structural)):
             await engine.stop()

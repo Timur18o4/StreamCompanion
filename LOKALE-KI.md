@@ -1,4 +1,4 @@
-# Lokale KI mit Version 0.2.3
+# Lokale KI mit Version 0.2.4
 
 Textmodell und Spracherkennung sind zwei getrennte Komponenten. Im Windows-Paket sind deren Python-Bibliotheken enthalten, aber weder Ollama noch Modellgewichte. Der erste Start enthält keine Twitch-Konten, API-Schlüssel oder persönlichen Erinnerungen.
 
@@ -15,6 +15,8 @@ Auf dem Vergleichsrechner mit 16 physischen Kernen und 32 logischen Prozessoren 
 Das Skript `scripts/local-ai/Start-LocalAI.ps1` ist ein optionaler Helfer für eine eigene portable Ollama-Installation: zusammen mit `runtime/ollama.exe` unter einem Ordner `local-ai` ablegen. Es erwartet Modelle unter `models/ollama`; optional kann `models-location.json` mit `{"modelsPath":"D:\\KI-Modelle"}` einen bestehenden Modellordner auswählen. Es installiert oder lädt keine Modelle herunter und wird vom allgemeinen Start.cmd nicht automatisch aufgerufen.
 
 ## Fortlaufende Spracherkennung
+
+Ist ein ausdrücklich eingerichteter Modellordner nicht erreichbar oder seine Konfiguration ungültig, bricht der Starthelfer ab. Er wechselt nicht auf andere Modelle. Der verwendete Pfad bzw. Fehler steht in `local-ai/logs/startup.log`.
 
 1. Das [mehrsprachige Nemotron-Streaming-Modell für sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/nemo/nemotron-streaming.html) separat herunterladen und entpacken. Hinweise und Lizenz stehen auch in der [Modellkarte](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b).
 2. Der Modellordner muss `encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx` und `tokens.txt` enthalten.

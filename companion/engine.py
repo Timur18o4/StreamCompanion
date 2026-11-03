@@ -177,7 +177,7 @@ class Engine:
         address = addressed_to_bot(payload, bot, settings.bot_name)
         if not address and conversation_followup(self.events, user_id, text):
             address = "chat_followup"
-        row = self.event("chat", name, text, subject_id=user_id, remember=settings.viewer_memory and self.store.consented(settings.channel, user_id), message_id=incoming_id, addressed_to_bot=bool(address), address_kind=address)
+        row = self.event("chat", name, text, subject_id=user_id, remember=self.store.viewer_memory_allowed(settings.channel, user_id), message_id=incoming_id, addressed_to_bot=bool(address), address_kind=address)
         previous = self.reply_target()
         combined = combine_request(previous, row)
         if combined:
@@ -186,6 +186,11 @@ class Engine:
         elif address:
             await self.schedule_reply(row)
         self.last_owner_text = time.time()
+        if row.get("remember") and settings.provider == "local":
+            # A viewer need not address the bot or cause a public reply to be remembered.
+            memory_context = self.context()
+            memory_context["reply_to"] = row
+            self.defer_memory(memory_context)
 
     def reply_target(self, now=None):
         now = time.time() if now is None else now
@@ -427,7 +432,7 @@ class Engine:
             if target and not any(row["id"] == target["id"] for row in rows):
                 rows.insert(0, dict(target))
         for event in rows:
-            if event.get("remember") and event["kind"] == "chat" and settings.viewer_memory and self.store.consented(settings.channel, event.get("subject_id", "")):
+            if event.get("remember") and event["kind"] == "chat" and self.store.viewer_memory_allowed(settings.channel, event.get("subject_id", "")):
                 eligible.add(event["subject_id"])
         memories = [item for item in self.store.memories(settings.channel) if item["subject_id"] in eligible]
         # Audio-source labels identify devices, not people. Keep old stored
@@ -515,7 +520,7 @@ class Engine:
         async with self.analysis_lock:
             job = self.memory_backlog.popleft()
             settings = self.store.settings()
-            permitted = settings.owner_memory and job["subject_id"] == self.channel.get("id") if job.get("owner") else settings.viewer_memory and self.store.consented(settings.channel, job["subject_id"])
+            permitted = settings.owner_memory and job["subject_id"] == self.channel.get("id") if job.get("owner") else self.store.viewer_memory_allowed(settings.channel, job["subject_id"])
             if not self.running or self.paused or settings.provider != "local" or not permitted or not self.channel_ready() or job["channel"] != settings.channel or job["revision"] != self.revision or time.time() - job["time"] > 600:
                 return
             epoch, revision = self.epoch, self.revision
@@ -633,7 +638,7 @@ class Engine:
                 continue
             if evidence["kind"] == "audio" and evidence.get("role") != "streamer":
                 continue
-            if evidence["kind"] == "chat" and not self.store.consented(settings.channel, subject):
+            if evidence["kind"] == "chat" and not self.store.viewer_memory_allowed(settings.channel, subject):
                 continue
             self.store.add_memory(settings.channel, subject, evidence.get("speaker_name", evidence["name"]), fact, f'{datetime.fromtimestamp(evidence["time"], timezone.utc).isoformat()} · {evidence["text"][:600]}')
 

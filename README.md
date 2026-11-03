@@ -1,16 +1,18 @@
-# Stream Companion · Version 0.2.3
+# Stream Companion · Version 0.2.4
 
 Ein Gesprächsbegleiter für einen eigenen Twitch-Kanal. Er verarbeitet laufend Audio, berücksichtigt Chat und Kategorie und erzeugt kurze Kommentare oder Fragen. Ein eigener Bot-Account schreibt in den Chat. Die Oberfläche läuft lokal auf einem Windows-PC oder auf einem Raspberry/Linux-Rechner und lässt sich im Browser bedienen.
 
 **Dies ist eine funktionsfähige erste Testversion mit echten Integrationen.** Die Twitch-Anmeldung und KI-Verarbeitung benötigen deine eigenen Zugänge. Eine durchlaufene Demo ist kein Nachweis eines erfolgreichen Livebetriebs. Es wurde nichts aus dem früheren Kick-Projekt übernommen, insbesondere keine Zugangsdaten.
 
-Version 0.2.3 verbessert lokale Gespräche: bestätigte Frage-Antwort-Verläufe bleiben im Kontext, Rückfragen desselben Chatteilnehmers können ohne erneute Erwähnung beantwortet werden, und kurze Nachträge ergänzen eine laufende Anfrage. Direkte Antworten und spontane Kommentare verwenden normale Dialogrollen und freien Chattext; Antwortlänge und CPU-Threads lassen sich einstellen. Fortlaufende lokale Spracherkennung mit Nemotron ist enthalten. Fragen und hypothetische Aussagen gelten nicht als Gedächtnisbelege. Ein identischer Qualitätsstand gegenüber einem Cloudmodell ist damit nicht nachgewiesen.
+Neu in Version 0.2.4: optional automatische Zuschauer-Erinnerungen ohne vorheriges Opt-in, direkte Vormerkung geeigneter Chat-Aussagen und dauerhafte Speichersperren durch Zuschauer. Der Modellstart wechselt bei einem ungültigen ausdrücklich eingerichteten Pfad nicht mehr auf andere Modelle. Der Betrieb bleibt lokal; ein Mischbetrieb wurde nicht ergänzt.
 
-[Downloads für v0.2.3](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.2.3) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+Die bisherigen Gesprächsfunktionen bleiben enthalten: bestätigte Frage-Antwort-Verläufe bleiben im Kontext, Rückfragen desselben Chatteilnehmers können ohne erneute Erwähnung beantwortet werden, und kurze Nachträge ergänzen eine laufende Anfrage. Direkte Antworten und spontane Kommentare verwenden normale Dialogrollen und freien Chattext; Antwortlänge und CPU-Threads lassen sich einstellen. Fortlaufende lokale Spracherkennung mit Nemotron ist enthalten. Fragen und hypothetische Aussagen gelten nicht als Gedächtnisbelege. Ein identischer Qualitätsstand gegenüber einem Cloudmodell ist damit nicht nachgewiesen.
+
+[Downloads für v0.2.4](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.2.4) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
 
 ## Windows: portables Paket
 
-Im separaten Paket **StreamCompanion-Windows-v0.2.3.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
+Im separaten Paket **StreamCompanion-Windows-v0.2.4.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
 
 Die folgenden Installationsbefehle und die `.venv`-Anweisungen beziehen sich auf das **Quellpaket**. Im portablen Paket werden keine zusätzlichen Python-Pakete über `Start.cmd` installiert.
 
@@ -163,9 +165,13 @@ Erinnerungen sind auf den konfigurierten Kanal begrenzt. Vorschläge aus der KI 
 
 Bei aktiviertem Zuschauer-Gedächtnis:
 
+In der Einrichtung kann zwischen Zustimmung mit `!remember on` und automatischer Prüfung gewählt werden. Der automatische Modus prüft klare eigene Aussagen zu Spielen, Hobbys, Vorlieben, Projekten und Streamzielen, auch ohne Ansprache oder öffentliche Antwort des Bots. Der bisherige Zustimmungsmodus bleibt bei vorhandenen Installationen voreingestellt. Explizite Ablehnungen gelten in beiden Modi und bleiben nach Neustarts erhalten.
+
+Lokale Gedächtnisprüfungen werden direkt beim Eintreffen geeigneter Chatnachrichten vorgemerkt. Antworten haben Vorrang. Die Warteschlange ist auf acht Prüfungen begrenzt; bei hoher Auslastung werden nicht alle Aussagen gespeichert. Ungeprüfte Aufträge werden nicht über einen Programmneustart hinweg aufbewahrt. Gespeicherte Notizen bleiben in der Datenbank, mit Person, Herkunft und Datum. Fragen, Vermutungen und Zitate werden bereits vor der Modellanfrage ausgeschlossen; die weitere inhaltliche Auswahl übernimmt das Modell.
+
 - `!remember on`: der Zuschauer erlaubt Erinnerungen für seinen Twitch-Account in diesem Kanal.
-- `!remember off`: deaktiviert das Opt-in und entfernt die eigenen gespeicherten Erinnerungen.
-- `!forget` oder `!forget me`: dieselbe Löschung und Rücknahme des Opt-ins; zusätzlich wird der eigene noch vorhandene temporäre Chatkontext entfernt.
+- `!remember off`: sperrt weiteres Speichern und entfernt die eigenen gespeicherten Erinnerungen, auch im automatischen Modus.
+- `!forget` oder `!forget me`: dieselbe Löschung und Sperre; zusätzlich wird der eigene noch vorhandene temporäre Chatkontext entfernt. `!remember on` hebt die Sperre wieder auf, sofern das Zuschauer-Gedächtnis aktiviert ist.
 
 Das aktuelle Chatfenster ist unabhängig davon für die laufende Unterhaltung nutzbar. Ein Opt-out des dauerhaften Gedächtnisses bedeutet nicht, dass eine neue öffentliche Chatnachricht für den aktuellen Gesprächskontext unsichtbar wird. Die Befehle sind keine Moderationsbefehle.
 

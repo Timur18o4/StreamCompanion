@@ -79,6 +79,14 @@ class Store:
         row = self.db.execute("SELECT enabled FROM consent WHERE channel=? AND user_id=?", (channel, user_id)).fetchone()
         return bool(row and row[0])
 
+    def viewer_memory_allowed(self, channel: str, user_id: str) -> bool:
+        settings = self.settings()
+        if not settings.viewer_memory or not user_id:
+            return False
+        row = self.db.execute("SELECT enabled FROM consent WHERE channel=? AND user_id=?", (channel, user_id)).fetchone()
+        # Explicit opt-outs remain binding in automatic mode, including after restart.
+        return bool(row[0]) if row else settings.viewer_memory_mode == "automatic"
+
     def consent(self, channel: str, user_id: str, name: str, enabled: bool):
         self.db.execute("INSERT OR REPLACE INTO consent VALUES (?,?,?,?)", (channel, user_id, name, int(enabled)))
         if not enabled:
@@ -104,7 +112,8 @@ class Store:
 
     def forget_channel(self, channel: str):
         self.db.execute("DELETE FROM memories WHERE channel=?", (channel,))
-        self.db.execute("DELETE FROM consent WHERE channel=?", (channel,))
+        # Clearing notes must never silently re-enable a viewer who opted out.
+        self.db.execute("DELETE FROM consent WHERE channel=? AND enabled=1", (channel,))
         self.db.commit()
 
     def close(self):

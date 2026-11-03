@@ -1,4 +1,14 @@
-# Validierung von Version 0.2.3
+# Validierung von Version 0.2.4
+
+Stand: 3. November 2026. 195 automatisierte Tests bestanden (447,64 Sekunden, zwei Hinweise aus Testbibliotheken). Die sieben neuen Gedächtnisprüfungen wurden nach der abschließenden Änderung zur Beibehaltung von Speichersperren erneut erfolgreich ausgeführt. Zehn zusätzliche Starthelfer-Prüfungen unter Windows PowerShell 5.1 bestanden. JavaScript-Syntax und Git-Diff wurden geprüft.
+
+Geprüft wurden automatische Zuschauer-Erinnerungen ohne Bot-Ansprache, passende Personen- und Belegzuordnung, Vorrang laufender Antworten, Opt-out mit Löschung und Sperre, Wiederaktivierung, getrennte Kanäle und Fortbestand nach Wiederöffnen der Datenbank. Fragen, Vermutungen und Zitate wurden nicht für die Gedächtnisprüfung vorgemerkt. Die Tests verwenden isolierte Beispieldaten und simulierte Modellantworten; ein neues echtes Zuschauer-Gedächtnis wurde damit nicht bestätigt.
+
+Die installierte EXE meldete Version 0.2.4; der automatische Erinnerungsmodus war aktiviert, neun bestehende Notizen blieben erhalten und die Zugangsschlüssel unverändert. Twitch war verbunden, das lokale Modell vorbereitet und beide Audioquellen lieferten Daten ohne Rückstau oder Paketverluste. Diese Laufzeitprüfung bestätigt keinen neuen tatsächlichen Twitch-Versand.
+
+Der Starthelfer verwendet bei einem unlesbaren oder fehlenden ausdrücklich eingerichteten Modellordner keinen anderen Modellbestand mehr. Er protokolliert den Startpfad und bricht mit einer konkreten Fehlermeldung ab. Die ursprüngliche Ursache der kurzzeitig gemeldeten Nichterreichbarkeit konnte nicht reproduziert werden; ein vollständiger PC-Neustart wurde für diese Korrektur nicht getestet.
+
+## Vorherige Prüfungen von Version 0.2.3
 
 188 automatisierte Tests bestanden (317,24 Sekunden, zwei Hinweise aus Testbibliotheken). JavaScript-Syntax und die installierte EXE samt Oberfläche wurden geprüft. Vier zusätzliche Modellordner-Prüfungen unter Windows PowerShell 5.1 bestanden.
 

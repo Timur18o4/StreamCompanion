@@ -1,16 +1,35 @@
 $ErrorActionPreference = 'Stop'
 $runtime = Join-Path $PSScriptRoot 'runtime\ollama.exe'
-$models = Join-Path $PSScriptRoot 'models\ollama'
-$modelLocation = Join-Path $PSScriptRoot 'models-location.json'
-if (Test-Path -LiteralPath $modelLocation) {
-    $location = Get-Content -LiteralPath $modelLocation -Raw | ConvertFrom-Json
-    if ($location.modelsPath -and (Test-Path -LiteralPath $location.modelsPath -PathType Container)) {
-        $models = [IO.Path]::GetFullPath([string]$location.modelsPath)
-    } else {
-        Write-Warning 'Der zusaetzliche Modellordner fehlt. Verwende die Modelle im Installationsordner.'
+$logs = Join-Path $PSScriptRoot 'logs'
+New-Item -ItemType Directory -Path $logs -Force | Out-Null
+function Resolve-ModelDirectory {
+    param([string]$Root)
+    $pointer = Join-Path $Root 'models-location.json'
+    if (-not (Test-Path -LiteralPath $pointer)) { return (Join-Path $Root 'models\ollama') }
+    try {
+        $configuration = Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json
+        $configured = [string]$configuration.modelsPath
+        if ([string]::IsNullOrWhiteSpace($configured)) { throw 'modelsPath ist leer.' }
+        $configured = [Environment]::ExpandEnvironmentVariables($configured.Trim())
+        if (-not [IO.Path]::IsPathRooted($configured)) { $configured = Join-Path $Root $configured }
+        $resolved = [IO.Path]::GetFullPath($configured)
+        # Do not silently switch to a different model inventory after a restart.
+        if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
+            throw "Modellordner ist nicht erreichbar: $resolved"
+        }
+        return (Get-Item -LiteralPath $resolved -Force).FullName
+    } catch {
+        throw "Modellpfad aus $pointer konnte nicht verwendet werden: $($_.Exception.Message) Kein Wechsel auf andere Modelle."
     }
 }
-$logs = Join-Path $PSScriptRoot 'logs'
+try {
+    $models = Resolve-ModelDirectory -Root $PSScriptRoot
+    Add-Content -LiteralPath (Join-Path $logs 'startup.log') -Value ("{0} user={1} root={2} models={3}" -f (Get-Date -Format o), [Environment]::UserName, $PSScriptRoot, $models)
+} catch {
+    Add-Content -LiteralPath (Join-Path $logs 'startup.log') -Value ("{0} user={1} root={2} ERROR={3}" -f (Get-Date -Format o), [Environment]::UserName, $PSScriptRoot, $_.Exception.Message)
+    throw
+}
+Write-Output "Modellordner: $models"
 $pidFile = Join-Path $PSScriptRoot 'server.pid'
 $address = 'http://127.0.0.1:11434'
 

@@ -293,8 +293,8 @@ async function action(name, element) {
       await post('memories',{fact}); $('#memory-fact').value = ''; await loadMemories(); await refresh(); toast('Erinnerung hinzugefügt.'); break;
     }
     case 'delete-memory': await api('memories/' + element.dataset.id,{method:'DELETE'}); await loadMemories(); await refresh(); break;
-    case 'clear-memory': showModal('<h2>Erinnerungen löschen?</h2><p>Alle Erinnerungen und Zuschauer-Opt-ins dieses Kanals werden entfernt. Andere Kanäle bleiben erhalten.</p><button class="primary" data-action="confirm-clear-memory">Erinnerungen dieses Kanals löschen</button>'); break;
-    case 'confirm-clear-memory': await api('memories',{method:'DELETE'}); $('#modal').close(); await loadMemories(); await refresh(); toast('Erinnerungen und Opt-ins gelöscht.'); break;
+    case 'clear-memory': showModal('<h2>Erinnerungen löschen?</h2><p>Alle Erinnerungen und Zuschauer-Zustimmungen dieses Kanals werden entfernt. Persönliche Speichersperren bleiben erhalten. Andere Kanäle bleiben erhalten.</p><button class="primary" data-action="confirm-clear-memory">Erinnerungen dieses Kanals löschen</button>'); break;
+    case 'confirm-clear-memory': await api('memories',{method:'DELETE'}); $('#modal').close(); await loadMemories(); await refresh(); toast('Erinnerungen und Zustimmungen gelöscht. Speichersperren bleiben erhalten.'); break;
     case 'export-memory': {
       await loadMemories(); const blob = new Blob([JSON.stringify(memoryList,null,2)],{type:'application/json'});
       const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = 'stream-companion-erinnerungen.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000); break;
