@@ -27,6 +27,7 @@ from .twitch import TwitchError
 class SettingsInput(BaseModel):
     settings: Settings
     ai_key: str | None = Field(default=None, max_length=1000)
+    gemini_key: str | None = Field(default=None, max_length=1000)
     stt_key: str | None = Field(default=None, max_length=1000)
     obs_password: str | None = Field(default=None, max_length=1000)
     twitch_client_secret: str | None = Field(default=None, max_length=1000)
@@ -62,6 +63,7 @@ def create_app(data_dir: Path | None = None):
 
     @asynccontextmanager
     async def lifespan(app):
+        engine.history.start()
         yield
         await engine.close()
         store.close()
@@ -104,14 +106,14 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/status", dependencies=[Depends(auth)])
     async def status():
         settings = store.settings()
-        return {"version": __version__, "settings": settings.model_dump(), "profiles": store.profiles(), "oauth": engine.twitch.pending, "secret_status": {name: bool(store.get(name)) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")}, "runtime": engine.snapshot(), "capabilities": {**{name: importlib.util.find_spec(name) is not None for name in ("sounddevice", "faster_whisper", "sherpa_onnx", "mss", "streamlink")}, "cpu_threads_max": cpu_threads_max(), "whisper_threads_default": min(8, cpu_threads_max())}}
+        return {"version": __version__, "settings": settings.model_dump(), "profiles": store.profiles(), "oauth": engine.twitch.pending, "secret_status": {name: bool(store.get(name)) for name in ("ai_key", "gemini_key", "stt_key", "obs_password", "twitch_client_secret")}, "runtime": engine.snapshot(), "capabilities": {**{name: importlib.util.find_spec(name) is not None for name in ("sounddevice", "faster_whisper", "sherpa_onnx", "mss", "streamlink")}, "cpu_threads_max": cpu_threads_max(), "whisper_threads_default": min(8, cpu_threads_max())}}
 
     @app.post("/api/settings", dependencies=[Depends(auth)])
     async def save_settings(payload: SettingsInput):
         old = store.settings()
         changed_identity = old.twitch_client_id != payload.settings.twitch_client_id
-        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "viewer_memory_mode", "cloud_chat_permission", "chat_source", "multichat_url", "output_mode", "tts_engine", "tts_voice", "tts_device", "tts_device_name", "tts_device_host", "tts_rate", "tts_volume")
-        secrets_changed = any(getattr(payload, name) for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret")) or bool(payload.clear_secrets)
+        structural = ("channel", "sources", "input_mode", "offline_test", "stt_provider", "provider", "api_base", "text_model", "transcription_model", "whisper_model", "whisper_cpu_threads", "streaming_model", "streaming_cpu_threads", "local_ai_cpu_threads", "owner_memory", "viewer_memory", "viewer_memory_mode", "cloud_chat_permission", "chat_source", "multichat_url", "output_mode", "tts_engine", "tts_voice", "tts_device", "tts_device_name", "tts_device_host", "tts_rate", "tts_volume", "gemini_live_model", "history_enabled", "history_paths", "history_recursive")
+        secrets_changed = any(getattr(payload, name) for name in ("ai_key", "gemini_key", "stt_key", "obs_password", "twitch_client_secret")) or bool(payload.clear_secrets)
         if engine.speech.task and any(getattr(old, key) != getattr(payload.settings, key) for key in structural):
             engine.speech.stop()
         if engine.running and (secrets_changed or any(getattr(old, key) != getattr(payload.settings, key) for key in structural)):
@@ -120,8 +122,11 @@ def create_app(data_dir: Path | None = None):
             for role in ("owner", "bot"):
                 await engine.twitch.cancel_auth(role)
                 store.delete("twitch_" + role)
+        if any(getattr(old, key) != getattr(payload.settings, key) for key in ("history_enabled", "history_paths", "history_recursive", "channel")):
+            engine.history.abort.set()
         store.put("settings", payload.settings.model_dump())
-        for name in ("ai_key", "stt_key", "obs_password", "twitch_client_secret"):
+        engine.history.wake.set()
+        for name in ("ai_key", "gemini_key", "stt_key", "obs_password", "twitch_client_secret"):
             value = getattr(payload, name)
             if value:
                 store.put(name, value.strip())
@@ -174,6 +179,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.post("/api/shutdown", dependencies=[Depends(auth)])
     async def shutdown():
+        await engine.history.close()
         await engine.stop()
         callback = getattr(app.state, "shutdown_callback", None)
         if callback:
@@ -231,6 +237,29 @@ def create_app(data_dir: Path | None = None):
     @app.get("/api/ai/models", dependencies=[Depends(auth)])
     async def ai_models():
         return {"models": await engine.ai.models()}
+
+    @app.get("/api/history/status", dependencies=[Depends(auth)])
+    async def history_status():
+        return engine.history.snapshot()
+
+    @app.post("/api/history/scan", dependencies=[Depends(auth)])
+    async def history_scan():
+        settings = store.settings()
+        if not settings.history_enabled or not settings.history_paths:
+            raise ValueError("Bitte die Chat-Historie aktivieren und mindestens einen Logpfad speichern.")
+        return await engine.history.scan()
+
+    @app.post("/api/history/rebuild", dependencies=[Depends(auth)])
+    async def history_rebuild():
+        if not store.settings().history_enabled or not store.settings().history_paths:
+            raise ValueError("Bitte zuerst die Historie und ihre Logpfade aktivieren.")
+        engine.revision += 1
+        engine.pending = None
+        return await engine.history.scan(rebuild=True)
+
+    @app.get("/api/history/search", dependencies=[Depends(auth)])
+    async def history_search(q: str = "", limit: int = 20):
+        return {"messages": engine.history.search(q[:1000], limit=max(1, min(limit, 30)))}
 
     @app.post("/api/ai/test", dependencies=[Depends(auth)])
     async def ai_test():
@@ -304,6 +333,7 @@ def create_app(data_dir: Path | None = None):
     @app.delete("/api/memories", dependencies=[Depends(auth)])
     async def memory_reset():
         store.forget_channel(store.settings().channel)
+        engine.history.purge()
         engine.events.clear()
         engine.reply_requests.clear()
         engine.memory_backlog.clear()

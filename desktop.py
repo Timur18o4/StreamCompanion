@@ -5,6 +5,26 @@ from pathlib import Path
 
 
 def main():
+    if "--prepare-local-ai" in sys.argv:
+        import subprocess
+        from companion.paths import runtime_root
+        from companion.storage import Store
+        root = runtime_root()
+        store = Store(root / "data")
+        try:
+            provider = store.settings().provider
+        finally:
+            store.close()
+        if provider == "local":
+            helper = root / "local-ai" / "Start-LocalAI.ps1"
+            if helper.exists():
+                result = subprocess.run(
+                    ["powershell.exe", "-NoLogo", "-NoProfile", "-File", str(helper)],
+                    stdout=sys.stdout, stderr=sys.stderr,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+                raise SystemExit(result.returncode)
+        return
     if "--tts-worker" in sys.argv:
         sys.argv.remove("--tts-worker")
         from companion.tts_worker import main as worker

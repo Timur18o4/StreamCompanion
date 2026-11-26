@@ -38,7 +38,15 @@ class Store:
           CREATE TABLE IF NOT EXISTS consent (
             channel TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL,
             enabled INTEGER NOT NULL, PRIMARY KEY(channel,user_id));
+          CREATE TABLE IF NOT EXISTS history_forget (
+            channel TEXT NOT NULL, subject_id TEXT NOT NULL, name TEXT NOT NULL,
+            cutoff REAL NOT NULL, PRIMARY KEY(channel,subject_id));
         """)
+        self.db.commit()
+
+        # A pre-existing opt-out must also exclude history after later opt-in.
+        for row in self.db.execute("SELECT channel,user_id,name FROM consent WHERE enabled=0").fetchall():
+            self.db.execute("INSERT OR IGNORE INTO history_forget VALUES (?,?,?,?)", (row["channel"], row["user_id"], row["name"].casefold(), time.time()))
         self.db.commit()
 
     @staticmethod
@@ -91,6 +99,7 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO consent VALUES (?,?,?,?)", (channel, user_id, name, int(enabled)))
         if not enabled:
             self.db.execute("DELETE FROM memories WHERE channel=? AND subject_id=?", (channel, user_id))
+            self.db.execute("INSERT OR REPLACE INTO history_forget VALUES (?,?,?,?)", (channel, user_id, name.casefold(), time.time()))
         self.db.commit()
 
     def add_memory(self, channel: str, subject: str, name: str, fact: str, source: str):
@@ -123,6 +132,7 @@ class Store:
         self.db.execute("DELETE FROM memories WHERE channel=?", (channel,))
         # Clearing notes must never silently re-enable a viewer who opted out.
         self.db.execute("DELETE FROM consent WHERE channel=? AND enabled=1", (channel,))
+        self.db.execute("INSERT OR REPLACE INTO history_forget VALUES (?,?,?,?)", (channel, "*", "", time.time()))
         self.db.commit()
 
     def close(self):

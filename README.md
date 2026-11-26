@@ -1,4 +1,4 @@
-# Stream Companion · Version 0.3.0
+# Stream Companion · Version 0.4.0
 
 Ein Gesprächsbegleiter für einen eigenen Twitch-Kanal. Er verarbeitet laufend Audio, berücksichtigt Chat und Kategorie und erzeugt kurze Kommentare oder Fragen. Ein eigener Bot-Account schreibt in den Chat. Die Oberfläche läuft lokal auf einem Windows-PC oder auf einem Raspberry/Linux-Rechner und lässt sich im Browser bedienen.
 
@@ -8,7 +8,20 @@ Neu in Version 0.2.4: optional automatische Zuschauer-Erinnerungen ohne vorherig
 
 Die bisherigen Gesprächsfunktionen bleiben enthalten: bestätigte Frage-Antwort-Verläufe bleiben im Kontext, Rückfragen desselben Chatteilnehmers können ohne erneute Erwähnung beantwortet werden, und kurze Nachträge ergänzen eine laufende Anfrage. Direkte Antworten und spontane Kommentare verwenden normale Dialogrollen und freien Chattext; Antwortlänge und CPU-Threads lassen sich einstellen. Fortlaufende lokale Spracherkennung mit Nemotron ist enthalten. Fragen und hypothetische Aussagen gelten nicht als Gedächtnisbelege. Ein identischer Qualitätsstand gegenüber einem Cloudmodell ist damit nicht nachgewiesen.
 
-[Downloads für v0.3.0](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.3.0) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+[Downloads für v0.4.0](https://github.com/Timur18o4/StreamCompanion/releases/tag/v0.4.0) · [Prüfbericht](VALIDIERUNG.md) · [Lokale KI einrichten](LOKALE-KI.md)
+
+## Neu in Version 0.4.0
+
+Gemini ist als weiterer Anbieter auswählbar. Gemini Live versteht fortlaufendes
+Audio direkt und schlägt passende Beiträge vor. Für Chat-Antworten ist
+Gemini 3.5 Flash-Lite voreingestellt, für Live-Audio Gemini 3.8 Live.
+Ein eigener Gemini-Schlüssel wird verschlüsselt lokal gespeichert.
+Der kostenlose Tarif hat Nutzungslimits und eigene Datenverwendungsbedingungen.
+
+Zusätzlich enthält diese Veröffentlichung die bisher lokalen Änderungen an
+der suchbaren MultiChat-Loghistorie, der Gerätezuordnung nach Windows-Neustarts
+und der Verarbeitung direkter Chat-Ansprachen ohne OBS-Bildberechnung.
+Weitere Einzelheiten zur Gemini-Einrichtung und ihren Grenzen stehen unten.
 
 ## Neu in Version 0.3.0: MultiChat und Sprachausgabe
 
@@ -33,7 +46,7 @@ Persönliche MultiChat-Erinnerungen benötigen eine stabile Nutzer-ID aus der Br
 
 ## Windows: portables Paket
 
-Im separaten Paket **StreamCompanion-Windows-v0.3.0.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
+Im separaten Paket **StreamCompanion-Windows-v0.4.0.zip** ist die Python-Laufzeit einschließlich der lokalen Erkennungsbibliotheken bereits enthalten. Den gesamten Ordner entpacken und **StreamCompanion.exe** oder **Start.cmd** öffnen. `_internal` muss neben der EXE erhalten bleiben. Für den PC-Sender `PC-Sender.cmd` öffnen. Eine eigene Python-Installation ist bei diesem Paket nicht erforderlich. Ollama und die Gesprächs- und Sprachmodelle werden separat eingerichtet; persönliche Konten, Notizen und Modellgewichte sind nicht im Download enthalten.
 
 Die folgenden Installationsbefehle und die `.venv`-Anweisungen beziehen sich auf das **Quellpaket**. Im portablen Paket werden keine zusätzlichen Python-Pakete über `Start.cmd` installiert.
 
@@ -251,3 +264,35 @@ Es gibt Tests für Oberfläche/API, Zugangsschutz, verschlüsselte Tokenablage, 
 **Nicht abschließend geprüft:** OBS-Bildkontext im echten Stream, sämtliche Voicemeeter-Routings, Raspberry-Leistung und Empfang eines echten Twitch-Streams. Eigene Konten und Modelle müssen eingerichtet werden. Es gibt keine automatische Account-Erstellung, Viewer-Boosts, Abo-Abrechnung oder Produktionsfreigabe als öffentlicher Dienst.
 
 Der Charakter ist als KI-Begleiter erkennbar. Er muss sich auf Nachfrage wahrheitsgemäß erklären und erhält keine erfundene menschliche Biografie.
+
+
+## Gemini und direktes Live-Audio (0.4.0)
+
+In Einrichtung unter KI Google Gemini auswählen. Den Gemini-Schlüssel im eigenen
+Gemini-Feld hinterlegen. Für Text und Bilder kann ein verfügbares Gemini-Modell,
+beispielsweise gemini-3.5-flash-lite, eingetragen werden. Die Modellliste wird über
+Googles API geladen. Die bloße Auflistung garantiert keine Freischaltung.
+
+Für fortlaufendes direktes Audio Gemini Live auswählen und ein Live-Modell wie
+gemini-3.8-live eintragen. Pro aktiver Audioquelle öffnet Companion eine Sitzung.
+Das rohe Audio wird an Gemini gesendet. Gemini versteht den Audiostream und
+schlägt Beiträge per Funktionsaufruf vor. Die Oberfläche zeigt den von Gemini
+gemeldeten Audioanlass. Eine wörtliche Mitschrift wird in diesem Modus nicht
+erstellt. Automatische neue Gedächtnisnotizen aus Live-Audio werden derzeit
+nicht erzeugt. Vorhandene freigegebene Notizen und die Chat-Historie werden
+als Kontext mitgegeben. Chat-Antworten laufen ebenfalls über Gemini.
+
+Vorschau, Pausen, Stundenlimit und die bestehende Text-/TTS-Ausgabe gelten
+weiterhin. Direkte Chat-Antworten verwenden den Textkontext, allgemeine
+Live-Beiträge können aktivierte OBS-Bilder einbeziehen. Verbindungsabbrüche
+werden mit Wartezeit erneut versucht. Abgewiesene Zugänge oder Limits
+erscheinen als Fehler und erfordern einen Neustart nach der Korrektur.
+
+Der Schlüssel wird verschlüsselt lokal gespeichert. Der Free Tier hat
+Nutzungslimits. Google kann kostenlose Eingaben und Ausgaben zur
+Produktverbesserung verwenden. Aktuelle Bedingungen und Verfügbarkeit stehen
+unter https://aistudio.google.com/docs/pricing und
+https://aistudio.google.com/docs/live-api.
+
+Bei einer Installation mit dem vorbereiteten Start.cmd wird Ollama nur für
+den ausgewählten lokalen Gesprächsanbieter vorbereitet.

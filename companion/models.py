@@ -18,6 +18,7 @@ class AudioSource(BaseModel):
     enabled: bool = True
     device: int | None = None
     device_name: str = Field(default="", max_length=256)
+    device_host: str = Field(default="", max_length=100)
     remember: bool = False
 
 
@@ -26,6 +27,9 @@ class Settings(BaseModel):
     twitch_client_id: str = Field(default="", max_length=128)
     chat_source: Literal["twitch", "multichat"] = "twitch"
     multichat_url: str = "http://localhost:8765/events"
+    history_enabled: bool = False
+    history_paths: list[str] = Field(default_factory=list, max_length=20)
+    history_recursive: bool = True
     output_mode: Literal["text", "speech"] = "text"
     tts_engine: Literal["windows", "piper"] = "windows"
     tts_voice: str = Field(default="", max_length=256)
@@ -37,11 +41,12 @@ class Settings(BaseModel):
     bot_name: str = Field(default="Milo", min_length=1, max_length=32)
     spoken_name_aliases: str = Field(default="", max_length=300)
     personality: str = Field(default="Locker, aufmerksam, mit gelegentlichem trockenem Humor. Interessiert an den Themen des Streamers und der Community, auch außerhalb von Spielen. Mal ein kurzer Spruch, mal eine richtige Erklärung. Konkrete Bezüge statt Floskeln, künstlicher Begeisterung oder ständiger Rückfragen.", max_length=3000)
-    provider: Literal["local", "openai", "compatible"] = "local"
+    provider: Literal["local", "openai", "compatible", "gemini"] = "local"
     api_base: str = "http://127.0.0.1:11434/v1"
     text_model: str = ""
+    gemini_live_model: str = Field(default="gemini-3.8-live", min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9._-]+$")
     transcription_model: str = "gpt-live-transcribe"
-    stt_provider: Literal["openai_realtime", "local_whisper", "local_streaming"] = "openai_realtime"
+    stt_provider: Literal["openai_realtime", "local_whisper", "local_streaming", "gemini_live"] = "openai_realtime"
     whisper_model: str = Field(default="small", max_length=100)
     streaming_model: str = Field(default="", max_length=512)
     streaming_cpu_threads: int = Field(default=0, ge=0)
@@ -106,5 +111,19 @@ class Settings(BaseModel):
         if len(sources) > 8 or len({s.id for s in sources}) != len(sources):
             raise ValueError("Maximal acht Quellen mit eindeutigen Kennungen verwenden.")
         return sources
+
+    @field_validator("history_paths")
+    @classmethod
+    def clean_history_paths(cls, paths):
+        result = []
+        for path in paths:
+            path = path.strip()
+            if not path:
+                continue
+            if len(path) > 2048 or "\x00" in path:
+                raise ValueError("Ein Historienpfad ist ungueltig oder zu lang.")
+            if path not in result:
+                result.append(path)
+        return result
 
 

@@ -79,6 +79,7 @@ class AI:
         self.last_metrics = {}
         self.progress = {}
         self.ollama_probe = None
+        self.audio_proposal = None
 
     def time_budget(self, kind="general"):
         if self.store.settings().provider == "local":
@@ -137,15 +138,20 @@ class AI:
 
     def connection(self):
         settings = self.store.settings()
-        base = "https://api.openai.com/v1" if settings.provider == "openai" else settings.api_base
-        key = "" if settings.provider == "local" else self.store.get("ai_key", "")
+        base = "https://generativelanguage.googleapis.com/v1beta" if settings.provider == "gemini" else "https://api.openai.com/v1" if settings.provider == "openai" else settings.api_base
+        key = self.store.get("gemini_key", "") if settings.provider == "gemini" else "" if settings.provider == "local" else self.store.get("ai_key", "")
         external = urlparse(base).hostname not in {"127.0.0.1", "localhost", "::1"}
+        if settings.provider == "gemini" and not key:
+            raise AIError("Bitte den Gemini-API-Schlüssel hinterlegen.")
         if settings.provider == "openai" and not key:
             raise AIError("Bitte einen OpenAI-API-Schlüssel hinterlegen.")
         return settings, base, key, external
 
     async def models(self):
-        _, base, key, _ = self.connection()
+        settings, base, key, _ = self.connection()
+        if settings.provider == "gemini":
+            from .gemini import models
+            return await models(self.http, key)
         response = await self.http.get(base + "/models", headers={"Authorization": "Bearer " + key} if key else {})
         if response.status_code != 200:
             raise AIError(f"Die KI-Modellliste konnte nicht geladen werden (HTTP {response.status_code}).")
@@ -180,6 +186,11 @@ class AI:
         if context.get("context") == [] and not screenshot:
             return {"action": "skip", "message": "", "kind": "comment", "reason": "Kein aktueller Gesprächsanlass.", "memories": []}
         settings, base, key, external = self.connection()
+        if settings.provider == "gemini":
+            from .gemini import generate
+            if settings.stt_provider == "gemini_live" and "context" in context and not (context.get("reply_to") or {}).get("kind") == "chat" and self.audio_proposal:
+                return self.audio_proposal(context)
+            return await generate(self, context, screenshot, key)
         if not settings.text_model:
             raise AIError("Bitte ein Text-/Bildmodell auswählen.")
         direct = settings.provider == "local" and bool(context.get("reply_to"))

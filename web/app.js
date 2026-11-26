@@ -45,7 +45,7 @@ function setView(name) {
   $('#page-label').textContent = labels[name];
   if (name === 'audio') loadDevices().catch(error => toast(error.message, true));
   if (name === 'setup') loadSpeechOptions().catch(error => toast(error.message,true));
-  if (name === 'memory') loadMemories().catch(error => toast(error.message, true));
+  if (name === 'memory') Promise.all([loadMemories(),loadHistoryStatus()]).catch(error => toast(error.message, true));
   window.scrollTo({top:0,behavior:'instant'});
 }
 
@@ -59,14 +59,16 @@ function collectSettings() {
   $$('[data-setting]').forEach(el => {
     settings[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.type === 'number' || el.dataset.valueType === 'number' ? Number(el.value) : el.value;
   });
+  settings.history_paths = $('#history-paths').value.split(/\r?\n/).map(p=>p.trim()).filter(Boolean);
   settings.input_mode = $('input[name="input-mode"]:checked')?.value || settings.input_mode;
   settings.sources = $$('[data-source]').map(row => ({
     id:row.dataset.source, name:row.querySelector('[data-field=name]').value,
     role:row.querySelector('[data-field=role]').value,
     enabled:row.querySelector('[data-field=enabled]').checked,
     remember:row.querySelector('[data-field=remember]').checked,
-    device:row.querySelector('[data-field=device]').value === '' ? null : Number(row.querySelector('[data-field=device]').value),
-    device_name:row.querySelector('[data-field=device]').selectedOptions[0]?.dataset.name || row.dataset.deviceName || ''
+    device:['', 'unavailable'].includes(row.querySelector('[data-field=device]').value) ? null : Number(row.querySelector('[data-field=device]').value),
+    device_name:row.querySelector('[data-field=device]').selectedOptions[0]?.dataset.name || '',
+    device_host:row.querySelector('[data-field=device]').selectedOptions[0]?.dataset.host || ''
   }));
   const output = $('#tts-device').selectedOptions[0];
   settings.tts_device = output?.value ? Number(output.value) : null;
@@ -100,6 +102,7 @@ function hydrate() {
   $$('[data-secret]').forEach(el => el.placeholder = state.secret_status[el.dataset.secret] ? 'Hinterlegt · nur zum Ersetzen neu eingeben' : 'Noch kein Schlüssel hinterlegt');
   const inputMode = $(`input[name="input-mode"][value="${state.settings.input_mode}"]`);
   if (inputMode) inputMode.checked = true;
+  $('#history-paths').value = (state.settings.history_paths || []).join('\n');
   renderSources(state.settings.sources);
   updateProviderFields();
   updateIOFields();
@@ -107,7 +110,11 @@ function hydrate() {
 }
 
 function updateProviderFields() {
-  $('#base-url-field').hidden = $('#provider').value === 'openai';
+  $('#base-url-field').hidden = ['openai','gemini'].includes($('#provider').value);
+  $('#ai-key').hidden = $('#provider').value === 'gemini';
+  document.querySelector('label[for="ai-key"]').hidden = $('#provider').value === 'gemini';
+  $('#gemini-key-field').hidden = $('#provider').value !== 'gemini' && $('#stt-provider').value !== 'gemini_live';
+  $('#gemini-live-field').hidden = $('#stt-provider').value !== 'gemini_live';
   $('#stt-key-field').hidden = $('#stt-provider').value !== 'openai_realtime';
   $('#whisper-field').hidden = $('#stt-provider').value !== 'local_whisper';
   $('#whisper-cpu-field').hidden = $('#stt-provider').value !== 'local_whisper';
@@ -140,6 +147,7 @@ function renderAccounts() {
 function renderRuntime() {
   const runtime = state.runtime, settings = state.settings;
   const channel = runtime.channel;
+  if(currentView === 'memory' && runtime.history) renderHistoryStatus(runtime.history);
   $('#channel-name').textContent = runtime.demo ? 'Beispielstream' : channel.name || settings.channel || 'Dein Twitch-Kanal';
   $('#channel-title').textContent = runtime.demo ? 'Ein neuer Versuch mit dem Bogen · Beispielsituation' : channel.title || 'Die Verbindung beginnt in der Einrichtung.';
   $('#channel-category').textContent = runtime.demo ? 'Gameplay · Demo' : runtime.offline_test ? 'Lokales Audio · Offline-Test' : settings.chat_source === 'multichat' && channel.live == null ? 'MultiChat · Audio und Chat' : channel.category || 'Kategorie wird automatisch erkannt';
@@ -217,15 +225,30 @@ async function refresh(withHydrate = false) {
 
 function renderSources(sources) {
   const roleOptions = (role) => [['streamer','Streamer / Mikrofon'],['conversation','Gespräch / Discord'],['game','Gameplay'],['ignore','Nicht auswerten']].map(([value,label]) => `<option value="${value}" ${role === value ? 'selected' : ''}>${label}</option>`).join('');
-  $('#audio-sources').innerHTML = sources.map(source => `<div class="source-row" data-source="${esc(source.id)}" data-device-name="${esc(source.device_name || '')}"><div><label>Name der Quelle</label><input data-field="name" aria-label="Name der Quelle" value="${esc(source.name)}" maxlength="80" required><label class="check-row"><input type="checkbox" data-field="enabled" ${source.enabled ? 'checked' : ''}>Quelle verwenden</label></div><div><label>Rolle</label><select data-field="role" aria-label="Rolle der Audioquelle">${roleOptions(source.role)}</select><label class="check-row"><input type="checkbox" data-field="remember" ${source.remember ? 'checked' : ''}>Für Streamer-Erinnerungen</label></div><div><label>Aufnahmegerät auf diesem Rechner</label><select data-field="device" aria-label="Aufnahmegerät" data-selected="${source.device ?? ''}"></select><div class="source-level"><i></i></div><span class="source-status">Noch kein Audiosignal</span><p class="source-preview field-hint"></p></div><button class="source-delete" data-action="remove-source" aria-label="Quelle entfernen">${icon('trash')}</button></div>`).join('');
+  $('#audio-sources').innerHTML = sources.map(source => `<div class="source-row" data-source="${esc(source.id)}" data-device-name="${esc(source.device_name || '')}" data-device-host="${esc(source.device_host || '')}"><div><label>Name der Quelle</label><input data-field="name" aria-label="Name der Quelle" value="${esc(source.name)}" maxlength="80" required><label class="check-row"><input type="checkbox" data-field="enabled" ${source.enabled ? 'checked' : ''}>Quelle verwenden</label></div><div><label>Rolle</label><select data-field="role" aria-label="Rolle der Audioquelle">${roleOptions(source.role)}</select><label class="check-row"><input type="checkbox" data-field="remember" ${source.remember ? 'checked' : ''}>Für Streamer-Erinnerungen</label></div><div><label>Aufnahmegerät auf diesem Rechner</label><select data-field="device" aria-label="Aufnahmegerät" data-selected="${source.device ?? ''}"></select><div class="source-level"><i></i></div><span class="source-status">Noch kein Audiosignal</span><p class="source-preview field-hint"></p></div><button class="source-delete" data-action="remove-source" aria-label="Quelle entfernen">${icon('trash')}</button></div>`).join('');
   updateDeviceOptions();
 }
 
 function updateDeviceOptions() {
   $$('[data-field=device]').forEach(select => {
-    const selected = select.options.length ? select.value : select.dataset.selected || '';
-    const found = deviceList.some(device => String(device.index) === String(selected));
-    select.innerHTML = '<option value="">Quelle wählen …</option>' + deviceList.map(device => `<option value="${device.index}" data-name="${esc(device.name)}">${esc(device.name)} · ${esc(device.host)}</option>`).join('') + (!found && selected !== '' ? `<option value="${esc(selected)}">Gerät ${esc(selected)} · derzeit nicht verfügbar</option>` : '');
+    const row = select.closest('.source-row');
+    const previous = select.selectedOptions[0];
+    const name = previous ? previous.dataset.name : row.dataset.deviceName;
+    const host = previous ? previous.dataset.host : row.dataset.deviceHost;
+    const saved = select.options.length ? select.value : select.dataset.selected || '';
+    const key = value => value.replace(/\(\d+-\s+/g, '(').trim().toLowerCase();
+    let matches = name ? deviceList.filter(device => key(device.name) === key(name) && (!host || device.host === host)) : deviceList.filter(device => String(device.index) === saved);
+    if (name && !host) {
+      const exact = matches.filter(device => device.name === name);
+      if (exact.length) matches = exact;
+      for (const backend of ['MME', 'Windows WASAPI', 'Windows DirectSound']) {
+        const preferred = matches.filter(device => device.host === backend);
+        if (preferred.length) { matches = preferred; break; }
+      }
+    }
+    const found = matches.length === 1;
+    const selected = found ? String(matches[0].index) : name ? 'unavailable' : saved;
+    select.innerHTML = '<option value="">Quelle wählen …</option>' + deviceList.map(device => `<option value="${device.index}" data-name="${esc(device.name)}" data-host="${esc(device.host)}">${esc(device.name)} · ${esc(device.host)}</option>`).join('') + (!found && selected !== '' ? `<option value="${esc(selected)}" data-name="${esc(name || '')}" data-host="${esc(host || '')}">${esc(name || 'Gerät ' + saved)} · derzeit nicht verfügbar</option>` : '');
     select.value = selected;
     select.dataset.selected = selected;
   });
@@ -262,6 +285,10 @@ async function connect(role) {
 async function action(name, element) {
   if (!state && name !== 'close-modal') return;
   switch(name) {
+    case 'scan-history': await save(true); toast('Historie wird lokal eingelesen …'); renderHistoryStatus(await post('history/scan')); toast('Historienindex aktualisiert. Falls der Begleiter lief, bitte erneut starten.'); break;
+    case 'rebuild-history': await save(true); renderHistoryStatus(await post('history/rebuild')); toast('Alle Logs erneut eingelesen. Speichersperren bleiben erhalten.'); break;
+    case 'history-status': await loadHistoryStatus(); break;
+    case 'search-history': await searchHistory(); break;
     case 'save': await save(); break;
     case 'speech-options': await loadSpeechOptions(); toast('Stimmen und Wiedergabegeräte geladen.'); break;
     case 'install-voice': toast('Stimme wird heruntergeladen …'); await post('tts/install',{voice:$('#tts-voice').value}); await loadSpeechOptions(); toast('Stimme ist bereit.'); break;
@@ -309,8 +336,8 @@ async function action(name, element) {
       await post('memories',{fact}); $('#memory-fact').value = ''; await loadMemories(); await refresh(); toast('Erinnerung hinzugefügt.'); break;
     }
     case 'delete-memory': await api('memories/' + element.dataset.id,{method:'DELETE'}); await loadMemories(); await refresh(); break;
-    case 'clear-memory': showModal('<h2>Erinnerungen löschen?</h2><p>Alle Erinnerungen und Zuschauer-Zustimmungen dieses Kanals werden entfernt. Persönliche Speichersperren bleiben erhalten. Andere Kanäle bleiben erhalten.</p><button class="primary" data-action="confirm-clear-memory">Erinnerungen dieses Kanals löschen</button>'); break;
-    case 'confirm-clear-memory': await api('memories',{method:'DELETE'}); $('#modal').close(); await loadMemories(); await refresh(); toast('Erinnerungen und Zustimmungen gelöscht. Speichersperren bleiben erhalten.'); break;
+    case 'clear-memory': showModal('<h2>Erinnerungen löschen?</h2><p>Alle Notizen und indizierten bisherigen Chatnachrichten dieses Kanals werden entfernt und für erneuten Import gesperrt. Original-Logs bleiben unverändert. Zuschauer-Zustimmungen werden entfernt; persönliche Speichersperren bleiben erhalten. Andere Kanäle bleiben erhalten.</p><button class="primary" data-action="confirm-clear-memory">Erinnerungen dieses Kanals löschen</button>'); break;
+    case 'confirm-clear-memory': await api('memories',{method:'DELETE'}); $('#history-results').innerHTML=''; await loadHistoryStatus(); $('#modal').close(); await loadMemories(); await refresh(); toast('Erinnerungen und Zustimmungen gelöscht. Speichersperren bleiben erhalten.'); break;
     case 'export-memory': {
       await loadMemories(); const blob = new Blob([JSON.stringify(memoryList,null,2)],{type:'application/json'});
       const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = 'stream-companion-erinnerungen.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000); break;
@@ -339,7 +366,7 @@ document.addEventListener('click', async event => {
   finally {element.disabled = false;}
 });
 
-$('#provider').addEventListener('change', () => { updateProviderFields(); if ($('#provider').value === 'openai' && !$('#text-model').value) $('#text-model').value = 'gpt-4.1-mini'; });
+$('#provider').addEventListener('change', () => { if ($('#provider').value === 'gemini') { $('#text-model').value = 'gemini-3.5-flash-lite'; $('#stt-provider').value = 'gemini_live'; } updateProviderFields(); if ($('#provider').value === 'openai' && !$('#text-model').value) $('#text-model').value = 'gpt-4.1-mini'; });
 $('#stt-provider').addEventListener('change',updateProviderFields);
 $('#chat-source').addEventListener('change',updateIOFields);
 $('#output-mode').addEventListener('change',()=>{updateIOFields(); loadSpeechOptions().catch(error=>toast(error.message,true));});
@@ -378,3 +405,14 @@ function renderSpeechOptions(changedEngine = false, hydrate = false) {
     else { $('#tts-device').insertAdjacentHTML('beforeend',`<option value="${esc(previous)}" data-name="${esc(state.settings.tts_device_name)}" data-host="${esc(state.settings.tts_device_host)}">${esc(state.settings.tts_device_name)} · Liste laden / nicht verfügbar</option>`); $('#tts-device').value=previous; }
   }
 }
+
+function renderHistoryStatus(info) {
+  const stateLabel = !info.enabled ? 'Deaktiviert' : info.indexing ? 'Wird eingelesen' : info.pending ? 'Weitere Einträge folgen beim nächsten Durchlauf' : 'Bereit';
+  $('#history-status').textContent = `${stateLabel} · ${info.records || 0} Nachrichten · ${info.files || 0} Dateien` + (info.last_scan ? ` · geprüft ${clock(info.last_scan)}` : '') + (info.errors?.length ? ' · ' + info.errors.join(' · ') : '');
+}
+async function loadHistoryStatus() { renderHistoryStatus(await api('history/status')); }
+async function searchHistory() {
+  const result = await api('history/search?q=' + encodeURIComponent($('#history-query').value));
+  $('#history-results').innerHTML = result.messages.length ? result.messages.map(row=>`<article class="memory-item"><div class="memory-item-top"><b>${esc(row.name)} · ${esc(row.platform)}</b><time>${clock(row.timestamp,true)}</time></div><p>${esc(row.text)}</p><small>${esc(row.file)} · Byte ${row.offset}${row.identity_verified ? '' : ' · Ohne feste Nutzer-ID'}</small></article>`).join('') : '<p class="muted">Keine passenden freigegebenen Logeinträge gefunden.</p>';
+}
+$('#history-query').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();searchHistory().catch(error=>toast(error.message,true));}});

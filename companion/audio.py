@@ -3,8 +3,10 @@ import base64
 import io
 import json
 import math
+import re
 import uuid
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -21,6 +23,30 @@ def devices():
         return [{"index": index, "name": item["name"], "channels": item["max_input_channels"], "sample_rate": int(item["default_samplerate"]), "host": hosts[item["hostapi"]]["name"]} for index, item in enumerate(sd.query_devices()) if item["max_input_channels"] > 0]
     except (ImportError, OSError, Exception) as exc:
         return []
+
+
+def input_name_key(name):
+    # Windows can prepend a new instance number after a USB port change.
+    return re.sub(r"\(\d+-\s+", "(", name).strip().casefold()
+
+
+def resolve_input(source, available):
+    if not source.device_name:
+        return next((d for d in available if d["index"] == source.device), None)
+    matches = [d for d in available if input_name_key(d["name"]) == input_name_key(source.device_name)]
+    if source.device_host:
+        matches = [d for d in matches if d["host"] == source.device_host]
+    else:
+        # Older settings did not save the backend. Prefer an exact name,
+        # then the legacy Windows MME backend when multiple APIs expose it.
+        exact = [d for d in matches if d["name"] == source.device_name]
+        matches = exact or matches
+        for host in ("MME", "Windows WASAPI", "Windows DirectSound"):
+            preferred = [d for d in matches if d["host"] == host]
+            if preferred:
+                matches = preferred
+                break
+    return matches[0] if len(matches) == 1 else None
 
 
 def resample_pcm(samples, old_rate, new_rate=24000):
@@ -78,6 +104,7 @@ class Audio:
         self.streaming_recognizer = None
         self.streaming_config = None
         self.streaming_lock = asyncio.Lock()
+        self.gemini_proposals = deque(maxlen=8)
 
     def snapshot(self):
         return {source: {"level": round(state.level, 3) if time.time() - state.last_packet < 2 else 0, "last_packet": state.last_packet, "status": state.status, "bytes": state.bytes, "dropped": state.dropped, "partial_text": state.partial_text, "lag_seconds": round(state.queued_bytes / 48000, 2) if state.streaming else None} for source, state in self.states.items()}
@@ -87,7 +114,13 @@ class Audio:
             return
         settings = self.engine.store.settings()
         source = next((item for item in settings.sources if item.id == source_id and item.enabled and item.role != "ignore"), None)
-        if not self.engine.running or self.engine.paused or not self.engine.channel_ready() or not source or not pcm or len(pcm) % 2:
+        local_multichat = (
+            settings.chat_source == "multichat" and settings.input_mode == "local"
+            and settings.stt_provider in {"local_streaming", "local_whisper", "gemini_live"}
+        )
+        if not self.engine.running or self.engine.paused or not source or not pcm or len(pcm) % 2:
+            return
+        if not local_multichat and not self.engine.channel_ready():
             return
         if len(pcm) > 24000 * 2 * 2:
             return
@@ -112,7 +145,10 @@ class Audio:
         state.status = "Verbinde Spracherkennung"
         try:
             settings = self.engine.store.settings()
-            if settings.stt_provider == "local_streaming":
+            if settings.stt_provider == "gemini_live":
+                from .gemini import listen
+                await listen(self, source, state)
+            elif settings.stt_provider == "local_streaming":
                 await self.streaming_transcription(source, state)
             elif settings.stt_provider == "local_whisper":
                 await self.local_transcription(source, state)
@@ -125,6 +161,15 @@ class Audio:
             await self.engine.notify("error", source.name, str(exc) if isinstance(exc, (RuntimeError, ValueError, ImportError)) else "Audioverbindung unterbrochen. KI-Schlüssel und Verbindung prüfen.")
             # Backoff prevents one failed connection per incoming audio packet.
             await asyncio.sleep(15)
+
+    def gemini_proposal(self, context):
+        now = time.time()
+        while self.gemini_proposals:
+            created, fence, result = self.gemini_proposals.pop()
+            self.gemini_proposals.clear()
+            if now - created < 60 and fence == (self.engine.epoch, self.engine.revision):
+                return result
+        return {"action": "skip", "message": "", "kind": "comment", "reason": "Gemini Live hört weiter zu.", "memories": []}
 
     async def realtime_transcription(self, source, state):
         key = self.engine.store.get("stt_key") or self.engine.store.get("ai_key")
@@ -310,27 +355,78 @@ class Audio:
         except ImportError as exc:
             raise RuntimeError("Das Audio-Zusatzpaket ist nicht installiert.") from exc
         loop = asyncio.get_running_loop()
-        selected = [item for item in self.engine.store.settings().sources if item.enabled and item.role != "ignore" and item.device is not None]
+        selected = [item for item in self.engine.store.settings().sources if item.enabled and item.role != "ignore" and (item.device is not None or item.device_name)]
         if not selected:
             raise RuntimeError("Bitte mindestens eine lokale Audioquelle auswählen.")
+        self.tasks.append(asyncio.create_task(self.capture_local(sd, loop, selected)))
+
+    async def capture_local(self, sd, loop, selected):
+        captures = {}
+        startup_deadline = time.monotonic() + 10
+        while True:
+            now = time.monotonic()
+            for source_id, (stream, last_packet) in list(captures.items()):
+                if now - last_packet[0] < 5:
+                    continue
+                self.close_capture(stream)
+                self.streams.remove(stream)
+                del captures[source_id]
+            if len(captures) != len(selected):
+                available = devices()
+                if not captures and any(resolve_input(source, available) is None for source in selected):
+                    # PortAudio caches its device list. Refresh only without
+                    # open captures and before any local speech playback.
+                    speech = getattr(self.engine, "speech", None)
+                    if not (speech and speech.task):
+                        try:
+                            sd._terminate()
+                            sd._initialize()
+                        except sd.PortAudioError:
+                            pass
+                        available = devices()
+                    if now < startup_deadline and any(resolve_input(source, available) is None for source in selected):
+                        for source in selected:
+                            self.states.setdefault(source.id, AudioState()).status = "Warte auf Windows-Aufnahmegeräte"
+                        await asyncio.sleep(2)
+                        continue
+                for source in selected:
+                    if source.id in captures:
+                        continue
+                    state = self.states.setdefault(source.id, AudioState())
+                    device = resolve_input(source, available)
+                    if device is None:
+                        state.status = "Aufnahmegerät fehlt oder ist mehrdeutig · neuer Versuch folgt"
+                        continue
+                    rate = device["sample_rate"]
+                    last_packet = [now]
+                    stream = None
+
+                    def callback(data, frames, timing, status, source_id=source.id, rate=rate, last_packet=last_packet):
+                        last_packet[0] = time.monotonic()
+                        pcm = resample_pcm(data.copy(), rate)
+                        loop.call_soon_threadsafe(self.feed, source_id, pcm)
+
+                    try:
+                        stream = sd.InputStream(device=device["index"], channels=1, samplerate=rate, blocksize=round(rate * 0.1), dtype="float32", callback=callback)
+                        stream.start()
+                    except (sd.PortAudioError, ValueError, OSError) as exc:
+                        if stream is not None:
+                            self.close_capture(stream)
+                        state.status = f"Aufnahmegerät nicht bereit · neuer Versuch folgt ({exc})"
+                        continue
+                    state.status = "Aufnahmegerät geöffnet"
+                    self.streams.append(stream)
+                    captures[source.id] = (stream, last_packet)
+            await asyncio.sleep(2)
+
+    @staticmethod
+    def close_capture(stream):
+        import sounddevice as sd
+
         try:
-            for source in selected:
-                info = sd.query_devices(source.device, "input")
-                if source.device_name and info["name"] != source.device_name:
-                    raise ValueError(f"Das Gerät für {source.name} hat sich geändert. Bitte die Audioquelle neu auswählen.")
-                rate = int(info["default_samplerate"])
-                def callback(data, frames, timing, status, source_id=source.id, rate=rate):
-                    pcm = resample_pcm(data.copy(), rate)
-                    loop.call_soon_threadsafe(self.feed, source_id, pcm)
-                stream = sd.InputStream(device=source.device, channels=1, samplerate=rate, blocksize=round(rate * 0.1), dtype="float32", callback=callback)
-                stream.start()
-                self.streams.append(stream)
-        except Exception:
-            for stream in self.streams:
-                stream.stop()
-                stream.close()
-            self.streams.clear()
-            raise
+            stream.close()
+        except (sd.PortAudioError, RuntimeError, OSError):
+            pass
 
     async def start_twitch(self):
         import importlib.util
@@ -365,8 +461,7 @@ class Audio:
 
     async def stop(self):
         for stream in self.streams:
-            stream.stop()
-            stream.close()
+            self.close_capture(stream)
         self.streams.clear()
         tasks = self.tasks + [state.task for state in self.states.values() if state.task]
         for task in tasks:
@@ -380,6 +475,7 @@ class Audio:
         self.processes.clear()
         self.tasks.clear()
         self.states.clear()
+        self.gemini_proposals.clear()
 
 
 async def obs_screenshot(url, password):

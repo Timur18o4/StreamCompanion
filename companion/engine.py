@@ -11,6 +11,7 @@ from .ai import AI, AIError
 from .audio import Audio, obs_screenshot
 from .multichat import MultiChat
 from .speech import Speech
+from .history import ChatHistory
 from .twitch import Twitch, TwitchError
 from .mentions import addressed_to_bot, reply_key, REPLY_LIFETIME, DIRECT_REPLY_INTERVAL
 from .conversation import combine_request, conversation_followup, memory_candidate
@@ -64,8 +65,10 @@ class Engine:
         self.twitch = Twitch(store, self.notify)
         self.ai = AI(store)
         self.audio = Audio(self)
+        self.ai.audio_proposal = self.audio.gemini_proposal
         self.multichat = MultiChat(store, self.notify)
         self.speech = Speech(store)
+        self.history = ChatHistory(store)
 
     async def notify(self, level, title, message):
         self.logs.appendleft({"id": uuid.uuid4().hex, "time": time.time(), "level": level, "title": title, "message": message[:500]})
@@ -166,6 +169,8 @@ class Engine:
         if command in {"!remember on", "!remember off", "!forget", "!forget me"}:
             enable = command == "!remember on" and settings.viewer_memory
             self.store.consent(settings.channel, user_id, name, enable)
+            if not enable:
+                self.history.purge()
             # Remove the viewer's temporary context too when they opt out.
             if not enable:
                 self.events = deque((item for item in self.events if item.get("subject_id") != user_id and item.get("conversation_subject") != user_id), maxlen=400)
@@ -203,7 +208,7 @@ class Engine:
         while self.reply_requests and (now - self.reply_requests[0]["time"] > REPLY_LIFETIME or reply_key(self.reply_requests[0]) in self.handled_replies):
             self.reply_requests.popleft()
         settings = self.store.settings()
-        local = settings.provider != "openai" and urlparse(settings.api_base).hostname in {"127.0.0.1", "localhost", "::1"}
+        local = settings.provider in {"local", "compatible"} and urlparse(settings.api_base).hostname in {"127.0.0.1", "localhost", "::1"}
         if not local and not settings.cloud_chat_permission:
             return None
         return self.reply_requests[0] if self.reply_requests else None
@@ -265,6 +270,13 @@ class Engine:
         if self.running:
             return
         settings = self.store.settings()
+        if settings.stt_provider == "gemini_live":
+            if settings.provider != "gemini":
+                raise ValueError("Gemini Live benötigt Gemini als Gesprächsmodell.")
+            if not self.store.get("gemini_key"):
+                raise ValueError("Bitte den Gemini-API-Schlüssel hinterlegen.")
+            if not settings.cloud_chat_permission:
+                raise ValueError("Bitte die Übertragung des Chatkontexts an Gemini erlauben.")
         if not settings.channel:
             raise ValueError("Bitte zuerst einen Kanal einrichten.")
         await self.check_channel()
@@ -490,7 +502,14 @@ class Engine:
         memories.sort(key=lambda item: len(words.intersection(re.findall(r"\w{4,}", item["fact"].lower()))), reverse=True)
         if settings.provider == "local":
             memories = [{key: item[key] for key in ("id", "subject_id", "subject_name", "fact", "created", "source") if key in item} for item in memories[:3]]
-        return {"now": datetime.now(timezone.utc).isoformat(), "channel": {"name": self.channel.get("name"), "title": "Offline-Test mit lokalem Mikrofon" if self.offline_test_active() else self.channel.get("title"), "category": None if self.offline_test_active() else self.channel.get("category")}, "character": {"name": settings.bot_name, "account_login": bot.get("login", ""), "account_display_name": bot.get("display_name", ""), "personality": settings.personality, "output_mode": settings.output_mode}, "context": rows[-60:], "reply_to": target, "memories": memories[:12], "memory_subjects": list(eligible), "silence_seconds": round(max(0, now - self.last_voice)), "open_question": bool(self.last_question and self.last_owner_text <= self.last_question), "chat_included": not external or settings.cloud_chat_permission}
+        history = []
+        if settings.history_enabled and (not external or settings.cloud_chat_permission):
+            observations = [row for row in rows if row["kind"] in {"audio", "chat"} and not row.get("provisional")]
+            focus = target or (observations[-1] if observations else None)
+            if focus:
+                query = focus.get("canonical_text", focus["text"]) if target else " ".join(row["text"] for row in observations[-3:])
+                history = self.history.context(query, focus.get("subject_id") or (owner if focus.get("role") == "streamer" else ""), owner, exclude={(row.get("subject_id"), row["text"]) for row in rows})
+        return {"history": history, "now": datetime.now(timezone.utc).isoformat(), "channel": {"name": self.channel.get("name"), "title": "Offline-Test mit lokalem Mikrofon" if self.offline_test_active() else self.channel.get("title"), "category": None if self.offline_test_active() else self.channel.get("category")}, "character": {"name": settings.bot_name, "account_login": bot.get("login", ""), "account_display_name": bot.get("display_name", ""), "personality": settings.personality, "output_mode": settings.output_mode}, "context": rows[-60:], "reply_to": target, "memories": memories[:12], "memory_subjects": list(eligible), "silence_seconds": round(max(0, now - self.last_voice)), "open_question": bool(self.last_question and self.last_owner_text <= self.last_question), "chat_included": not external or settings.cloud_chat_permission}
 
     async def conversation(self):
         while self.running:
@@ -610,7 +629,10 @@ class Engine:
                 target = context["reply_to"]
                 if target:
                     expires = min(expires, target["time"] + REPLY_LIFETIME)
-                image = self.screenshot if self.store.settings().screenshots_enabled and time.time() - self.screenshot_time < 90 else None
+                image = None
+                chat_reply = target is not None and target["kind"] == "chat"
+                if not chat_reply and self.store.settings().screenshots_enabled and time.time() - self.screenshot_time < 90:
+                    image = self.screenshot
                 result = await self.run_model(context, image, kind="reply" if target else "general")
                 if result is None:
                     preempted = True
@@ -773,11 +795,12 @@ class Engine:
         label = "Prüft Erinnerungen" if self.analysis_kind == "memory" else "Schreibt Antwort" if progress.get("phase") == "writing" else "Verarbeitet Text und Bild" if progress.get("image") else "Verarbeitet Gesprächskontext" if progress.get("phase") == "context" else "Formuliert gerade"
         if analyzing and self.running and not self.paused:
             reason = f"KI {label[0].lower() + label[1:]} seit {round(phase_seconds)} Sekunden."
-        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.chat_connected(), "chat_source": settings.chat_source, "output_mode": settings.output_mode, "speech": {"status": self.speech.status, "speaking": self.speech.speaking}, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "analysis_label": label if analyzing else "", "analysis_phase": progress.get("phase", ""), "phase_seconds": phase_seconds, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
+        return {"running": self.running, "paused": self.paused, "demo": self.demo, "offline_test": self.offline_test_active(), "channel": self.channel, "chat_connected": self.chat_connected(), "chat_source": settings.chat_source, "output_mode": settings.output_mode, "speech": {"status": self.speech.status, "speaking": self.speech.speaking}, "reason": reason, "analyzing": analyzing, "analysis_kind": self.analysis_kind, "analysis_seconds": round(time.time() - self.analysis_started, 1) if analyzing else 0, "analysis_label": label if analyzing else "", "analysis_phase": progress.get("phase", ""), "phase_seconds": phase_seconds, "last_analysis_seconds": round(self.last_analysis_duration, 1), "last_ai_metrics": self.ai.last_metrics, "events": list(self.events)[-100:], "logs": list(self.logs)[:80], "pending": self.pending, "sources": self.audio.snapshot(), "screenshot_time": self.screenshot_time, "sent_hour": sum(sent > time.time() - 3600 for sent in self.sent_times), "history": self.history.snapshot(), "memories_count": len(self.store.memories(settings.channel)), "last_voice": self.last_voice}
 
     async def close(self):
         await self.stop()
         await self.speech.close()
+        await self.history.close()
         await self.twitch.close()
         await self.ai.close()
         await self.multichat.close()
